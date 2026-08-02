@@ -1,0 +1,20 @@
+[package]
+name = "cppbox"
+version = "0.1.0"
+edition = "2021"
+description = "CPPBox — local-first online C++ compiler/IDE"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-updater = "2"
+cppbox-core = { path = "../crates/cppbox-core" }
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+dirs = "5"
+serde_json = "1"
+
+[features]
+# default = ["custom-protocol"]

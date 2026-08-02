@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CPPBox",
+  "version": "0.1.0",
+  "identifier": "com.leafyoung.cppbox",
+  "build": {
+    "frontendDist": "../frontend"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null,
+      "assetProtocol": { "enable": false, "scope": [] }
+    },
+    "withGlobalTauri": false
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico", "icons/icon.png"],
+    "resources": ["../frontend/**/*"],
+    "category": "DeveloperTool"
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "dialog": true,
+      "endpoints": ["https://github.com/leafyoung/cppbox/releases/latest/download/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ1NTZENzZFQTM0M0JERUEKUldUcXZVT2pidGRXMVp1YVYwVHhmT0tyMGYra3VrSm0rS3lZUWI4aTY0TjUxeW0vWkRTSlV6cGsK"
+    }
+  }
+}

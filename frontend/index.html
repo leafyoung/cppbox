@@ -1,0 +1,1164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CPPBox — Online C++ Compiler</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/lint/lint.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/hint/show-hint.min.css">
+<!-- themes -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/material-ocean.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/dracula.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/blackboard.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/eclipse.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/idea.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/clike/clike.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/lint/lint.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/hint/show-hint.min.js"></script>
+<style>
+:root {
+  --bg: #0f111a; --surface: #1a1d2e; --surface2: #252840; --border: #2d3154;
+  --text: #cdd6f4; --dim: #6c7086; --accent: #89b4fa; --green: #a6e3a1; --red: #f38ba8; --yellow: #f9e2af;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); }
+.app { display:flex; height:100vh; }
+button { font-family:inherit; }
+
+/* Sidebar (projects) */
+.sidebar { width:230px; background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; }
+.sidebar-header { padding:14px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; }
+.sidebar-header h1 { font-size:15px; font-weight:600; color:var(--accent); }
+.sidebar-header span { font-size:11px; color:var(--dim); }
+.proj-list { flex:1; overflow-y:auto; }
+.trash-head { display:flex; align-items:center; gap:6px; padding:9px 12px; cursor:pointer; font-size:12px; color:var(--dim); border-top:1px solid var(--border); }
+.trash-head:hover { background:var(--surface2); color:var(--text); }
+.trash-head .caret { margin-left:auto; }
+.trash-body { display:none; max-height:240px; overflow-y:auto; }
+.trash-body.open { display:block; }
+.trash-item { padding:7px 12px; border-bottom:1px solid var(--border); font-size:12px; }
+.trash-item .t { color:var(--text); display:flex; justify-content:space-between; align-items:center; gap:4px; cursor:pointer; }
+.trash-item .t:hover { color:var(--accent); }
+.trash-item .meta { font-size:10px; color:var(--dim); margin-top:2px; }
+.trash-item .acts { display:flex; gap:4px; }
+.mini-btn { background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 7px; border-radius:3px; font-size:11px; cursor:pointer; }
+.mini-btn:hover { opacity:.85; }
+.mini-btn.del { color:var(--red); }
+.proj-item { padding:9px 14px; cursor:pointer; border-bottom:1px solid var(--border); font-size:13px; }
+.proj-item:hover { background:var(--surface2); }
+.proj-item.active { background:var(--surface2); border-left:3px solid var(--accent); }
+.proj-item .t { color:var(--text); font-weight:500; display:flex; justify-content:space-between; align-items:center; }
+.proj-item .std { font-size:10px; color:var(--dim); font-weight:normal; }
+.proj-item .del { opacity:0; background:none; border:none; color:var(--red); cursor:pointer; font-size:15px; }
+.proj-item:hover .del { opacity:1; }
+
+/* Main */
+.main { flex:1; display:flex; flex-direction:column; min-width:0; }
+.toolbar { display:flex; align-items:center; gap:8px; padding:6px 12px; background:var(--surface); border-bottom:1px solid var(--border); flex-wrap:wrap; }
+.toolbar input[type=text], .toolbar select { background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:5px 8px; border-radius:4px; font-size:12px; outline:none; }
+.toolbar input[type=text] { width:160px; }
+.toolbar input:focus, .toolbar select:focus { border-color:var(--accent); }
+.btn { padding:5px 11px; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:500; white-space:nowrap; }
+.btn:hover { opacity:.85; }
+.btn-primary { background:var(--accent); color:#000; }
+.btn-ghost { background:var(--surface2); color:var(--text); border:1px solid var(--border); }
+.btn-green { background:var(--green); color:#000; }
+.btn-warn { background:var(--yellow); color:#000; }
+.btn:disabled { opacity:.4; cursor:not-allowed; }
+.spacer { flex:1; }
+.status { font-size:11px; color:var(--dim); }
+
+/* File tabs */
+.tabs { display:flex; background:var(--surface); border-bottom:1px solid var(--border); overflow-x:auto; min-height:30px; }
+.tab { padding:5px 10px; font-size:12px; cursor:pointer; color:var(--dim); border-right:1px solid var(--border); display:flex; align-items:center; gap:6px; white-space:nowrap; }
+.tab:hover { background:var(--surface2); }
+.tab.active { color:var(--text); background:var(--surface2); border-bottom:2px solid var(--accent); }
+.tab .dot { width:6px; height:6px; border-radius:50%; background:var(--accent); display:none; }
+.tab.dirty .dot { display:inline-block; }
+.tab .x { opacity:.4; cursor:pointer; font-size:14px; }
+.tab .x:hover { opacity:1; color:var(--red); }
+
+.editor-wrap { flex:1; min-height:0; position:relative; }
+.CodeMirror { height:100% !important; font-size:14px; line-height:1.6; }
+
+/* Output */
+.output-panel { height:170px; background:var(--surface); border-top:1px solid var(--border); display:flex; flex-direction:column; }
+.out-tabs { display:flex; border-bottom:1px solid var(--border); padding:0 8px; }
+.out-tab { padding:6px 12px; font-size:12px; cursor:pointer; color:var(--dim); border-bottom:2px solid transparent; }
+.out-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+.out-content { flex:1; overflow:auto; padding:9px 13px; font-family:'JetBrains Mono','Fira Code',monospace; font-size:12px; white-space:pre-wrap; line-height:1.5; }
+.err { color:var(--red); } .ok { color:var(--green); }
+.stdin-wrap { display:flex; align-items:center; gap:6px; padding:4px 10px; border-top:1px solid var(--border); }
+.stdin-wrap input { flex:1; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 8px; border-radius:3px; font-size:12px; outline:none; }
+.stdin-wrap label { font-size:11px; color:var(--dim); white-space:nowrap; }
+.resize-handle { height:4px; cursor:ns-resize; background:var(--border); flex-shrink:0; }
+.resize-handle:hover { background:var(--accent); }
+
+/* Right file tree */
+.tree-panel { width:230px; background:var(--surface); border-left:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; transition:width .15s; }
+.tree-panel.collapsed { width:28px; }
+.tree-head { display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-bottom:1px solid var(--border); font-size:12px; color:var(--dim); }
+.tree-panel.collapsed .tree-head span, .tree-panel.collapsed .tree-body { display:none; }
+.tree-body { flex:1; overflow:auto; padding:4px 0; }
+.tree-row { display:flex; align-items:center; padding:3px 8px; cursor:pointer; font-size:12px; white-space:nowrap; gap:4px; }
+.tree-row:hover { background:var(--surface2); }
+.tree-row.active { background:var(--surface2); color:var(--accent); }
+.tree-row .ico { width:14px; text-align:center; opacity:.7; }
+.tree-row .acts { margin-left:auto; display:none; gap:4px; }
+.tree-row:hover .acts { display:flex; }
+.tree-row .acts button { background:none; border:none; color:var(--dim); cursor:pointer; font-size:12px; padding:0 2px; }
+.tree-row .acts button:hover { color:var(--accent); }
+.tree-toggle { background:none; border:none; color:var(--dim); cursor:pointer; font-size:14px; }
+.tree-empty { padding:16px; color:var(--dim); font-size:12px; text-align:center; }
+
+.spinner { display:inline-block; width:12px; height:12px; border:2px solid var(--dim); border-top-color:var(--accent); border-radius:50%; animation:spin .6s linear infinite; vertical-align:middle; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* VS Code modal */
+.modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; z-index:2000; }
+.modal-bg.show { display:flex; }
+.modal { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:20px; max-width:560px; width:90%; box-shadow:0 12px 40px rgba(0,0,0,.5); }
+.modal h2 { font-size:15px; color:var(--accent); margin-bottom:12px; }
+.modal pre { background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:10px; font-size:12px; overflow:auto; color:var(--text); margin:8px 0; font-family:'JetBrains Mono',monospace; }
+.modal .row { margin:10px 0; font-size:12px; }
+.modal .row b { color:var(--dim); display:inline-block; width:90px; }
+.modal .copy { background:var(--accent); color:#000; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-size:12px; }
+.CodeMirror-hints { z-index:3000; }
+.lsp-hover { position:absolute; z-index:1500; max-width:460px; max-height:240px; overflow:auto; background:var(--surface2); border:1px solid var(--border); border-radius:4px; padding:8px 10px; font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--text); box-shadow:0 6px 24px rgba(0,0,0,.5); white-space:pre-wrap; line-height:1.5; pointer-events:none; }
+
+/* ── Admin panel ── */
+.admin-bg { position:fixed; inset:0; background:rgba(8,10,18,.82); display:none; z-index:2500; align-items:stretch; justify-content:center; }
+.admin-bg.show { display:flex; }
+.admin-wrap { display:flex; flex-direction:column; width:100%; height:100%; background:var(--bg); }
+.admin-head { display:flex; align-items:center; justify-content:space-between; padding:14px 22px; border-bottom:1px solid var(--border); background:var(--surface); }
+.admin-head h2 { font-size:16px; color:var(--accent); font-weight:600; }
+.admin-body { display:flex; flex:1; overflow:hidden; }
+.admin-left { width:290px; border-right:1px solid var(--border); padding:18px; overflow-y:auto; background:var(--surface); flex-shrink:0; }
+.admin-right { flex:1; padding:22px 26px; overflow-y:auto; }
+.admin-label { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin-bottom:8px; font-weight:600; }
+.admin-section { margin-bottom:20px; }
+.admin-input { display:block; width:100%; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:7px 10px; border-radius:4px; font-size:13px; outline:none; margin-bottom:8px; }
+.admin-input:focus { border-color:var(--accent); }
+.admin-empty { color:var(--dim); font-size:13px; padding:40px 0; text-align:center; }
+.admin-class-item { padding:9px 12px; border:1px solid var(--border); border-radius:5px; margin-bottom:8px; cursor:pointer; transition:border-color .12s, background .12s; }
+.admin-class-item:hover { background:var(--surface2); }
+.admin-class-item.active { border-color:var(--accent); background:var(--surface2); }
+.admin-class-item .nm { font-size:13px; font-weight:600; color:var(--text); }
+.admin-class-item .sub { font-size:11px; color:var(--dim); margin-top:2px; }
+.admin-class-head { display:flex; align-items:center; gap:12px; margin-bottom:18px; flex-wrap:wrap; }
+.admin-class-head h3 { font-size:18px; color:var(--text); font-weight:700; }
+.admin-class-head .meta { font-size:12px; color:var(--dim); }
+.admin-textarea { width:100%; min-height:110px; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:9px 11px; border-radius:4px; font-size:12px; font-family:'JetBrains Mono',monospace; outline:none; resize:vertical; margin-bottom:8px; }
+.admin-textarea:focus { border-color:var(--accent); }
+.roster-row { display:flex; align-items:center; gap:10px; padding:6px 10px; border-bottom:1px solid var(--border); font-size:13px; }
+.roster-row .nm { color:var(--text); font-weight:500; }
+.roster-row .em { color:var(--dim); font-size:11px; }
+.key-row { border:1px solid var(--border); border-radius:5px; padding:10px 12px; margin-bottom:9px; background:var(--surface); }
+.key-row .top { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px; }
+.key-row .who { font-size:13px; font-weight:600; color:var(--text); }
+.key-row .asg { font-size:11px; color:var(--accent); background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:1px 9px; }
+.key-row .keyline { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.key-row code { font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--yellow); background:var(--surface2); border:1px solid var(--border); border-radius:4px; padding:3px 8px; letter-spacing:.03em; }
+.key-row .acts { display:flex; gap:6px; margin-left:auto; }
+.mini { background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:3px 9px; border-radius:4px; font-size:11px; cursor:pointer; text-decoration:none; display:inline-block; }
+.mini:hover { border-color:var(--accent); color:var(--accent); }
+.hint { font-size:11px; color:var(--dim); }
+.asg-card { border:1px solid var(--border); border-radius:5px; padding:10px 12px; margin-bottom:9px; background:var(--surface); }
+.asg-card .top { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.asg-card .nm { font-size:13px; font-weight:600; color:var(--text); }
+.asg-card .row { display:flex; gap:6px; align-items:center; margin-bottom:6px; flex-wrap:wrap; }
+.asg-card .row .admin-input { margin-bottom:0; }
+/* grid */
+.grid-panel { position:fixed; inset:0; background:var(--bg); z-index:1200; display:none; flex-direction:column; }
+.grid-panel.show { display:flex; }
+.grid-head { display:flex; align-items:center; gap:14px; padding:12px 18px; border-bottom:1px solid var(--border); }
+.grid-body { flex:1; overflow:auto; padding:14px 18px; }
+.grid-row { display:flex; align-items:center; gap:12px; padding:8px 10px; border-bottom:1px solid var(--border); }
+.grid-row .sn { width:34px; font-family:'JetBrains Mono',monospace; color:var(--dim); font-size:12px; }
+.grid-row .nm { flex:1; color:var(--text); font-size:13px; }
+.grid-status { width:30px; text-align:center; font-size:15px; cursor:pointer; }
+.grid-status:hover { transform:scale(1.25); }
+.grid-score { font-family:'JetBrains Mono',monospace; color:var(--accent); font-size:12px; width:50px; text-align:right; }
+/* marking editor */
+.marker { position:fixed; inset:0; background:var(--bg); z-index:1300; display:none; flex-direction:column; }
+.marker.show { display:flex; }
+.marker-head { display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:1px solid var(--border); }
+.marker-body { flex:1; display:flex; min-height:0; }
+.marker-left { width:55%; display:flex; flex-direction:column; border-right:1px solid var(--border); min-height:0; }
+.marker-right { flex:1; display:flex; flex-direction:column; min-height:0; }
+.marker-files { padding:6px 10px; border-bottom:1px solid var(--border); max-height:38%; overflow:auto; }
+.mfile { display:inline-block; font-size:11px; font-family:'JetBrains Mono',monospace; color:var(--dim); background:var(--surface2); border:1px solid var(--border); border-radius:3px; padding:2px 7px; margin:2px 3px; cursor:pointer; }
+.mfile.active { color:var(--accent); border-color:var(--accent); }
+.marker-code { flex:1; min-height:0; overflow:hidden; }
+.marker-code .CodeMirror { height:100%; }
+#feedbackTa { flex:1; width:100%; resize:none; background:var(--surface2); border:none; border-bottom:1px solid var(--border); color:var(--text); padding:12px 14px; font-family:'JetBrains Mono',monospace; font-size:13px; outline:none; }
+.marker-toolbar { display:flex; align-items:center; gap:8px; padding:8px 12px; border-top:1px solid var(--border); }
+.ac-pop { position:fixed; background:var(--surface); border:1px solid var(--accent); border-radius:4px; box-shadow:0 4px 14px rgba(0,0,0,.4); max-height:180px; overflow:auto; z-index:1400; display:none; }
+.ac-pop .ac-item { padding:4px 10px; font-size:12px; font-family:'JetBrains Mono',monospace; cursor:pointer; color:var(--text); }
+.ac-pop .ac-item.active,.ac-pop .ac-item:hover { background:var(--surface2); color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="sidebar">
+    <div class="sidebar-header"><h1>CPPBox</h1><span id="clangVer"></span></div>
+    <div style="padding:8px 10px; border-bottom:1px solid var(--border); display:flex; gap:6px;">
+      <button class="btn btn-primary" style="flex:1" onclick="createProject()">+ New Project</button>
+    </div>
+    <div class="proj-list" id="projList"></div>
+    <div class="trash-head" id="trashHead" onclick="toggleTrash()">
+      <span>🗑 Trash</span><span id="trashCount" class="std"></span><span class="caret" id="trashCaret">▸</span>
+    </div>
+    <div class="trash-body" id="trashBody"></div>
+  </div>
+
+  <div class="main">
+    <div class="toolbar">
+      <input type="text" id="titleInput" placeholder="Project name..." value="Untitled">
+      <select id="stdSelect" onchange="onStdChange()">
+        <option value="c++17">C++17</option>
+        <option value="c++20">C++20</option>
+        <option value="c++23" selected>C++23</option>
+      </select>
+      <select id="themeSelect" onchange="onThemeChange()" title="Color scheme"></select>
+      <button class="btn btn-warn" id="formatBtn" onclick="formatCode()">🎨 Format</button>
+      <button class="btn btn-ghost" onclick="saveActiveFile()">💾 Save</button>
+      <span class="status" id="statusText"></span>
+      <span class="spacer"></span>
+      <button class="btn btn-ghost" onclick="showAdmin()">🎓 Admin</button>
+      <button class="btn btn-primary" onclick="showSubmit()">📤 Submit</button>
+      <button class="btn btn-ghost" onclick="showVscode()">🔗 VS Code</button>
+      <button class="btn btn-green" id="runBtn" onclick="runCode()">▶ Run</button>
+    </div>
+    <div class="tabs" id="tabs"></div>
+    <div class="editor-wrap"><textarea id="editor"></textarea></div>
+    <div class="resize-handle" id="resizeHandle"></div>
+    <div class="output-panel" id="outputPanel">
+      <div class="out-tabs">
+        <span class="out-tab active" data-tab="output" onclick="switchOutTab('output')">Output</span>
+        <span class="out-tab" data-tab="compile" onclick="switchOutTab('compile')">Compile Log</span>
+      </div>
+      <div class="out-content" id="outputContent"><span style="color:var(--dim)">Click ▶ Run to compile & execute.</span></div>
+      <div class="stdin-wrap"><label>stdin:</label><input type="text" id="stdinInput" placeholder="Input for program (optional)"></div>
+    </div>
+  </div>
+
+  <div class="tree-panel" id="treePanel">
+    <div class="tree-head">
+      <span id="treeTitle">Files</span>
+      <div style="display:flex; gap:6px;">
+        <button class="tree-toggle" onclick="newFile()" title="New file">📄</button>
+        <button class="tree-toggle" onclick="newFolder()" title="New folder">📁</button>
+        <button class="tree-toggle" onclick="toggleTree()" title="Collapse">◀</button>
+      </div>
+    </div>
+    <div class="tree-body" id="treeBody"><div class="tree-empty">Open a project</div></div>
+    <button class="tree-toggle" style="display:none; margin:4px;" id="expandTree" onclick="toggleTree()">▶</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="vscodeModal" onclick="if(event.target===this)hideVscode()">
+  <div class="modal">
+    <h2>🔗 Open in VS Code (Remote-SSH)</h2>
+    <div class="row"><b>SSH host:</b> <input id="vcHostInput" oninput="regenVscode()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:12px;width:200px;outline:none;"> <span id="vcIps" style="font-size:11px;color:var(--dim);"></span></div>
+    <div class="row"><b>User:</b> <span id="vcUser"></span></div>
+    <div class="row"><b>Project path:</b> <span id="vcPath"></span></div>
+    <div style="font-size:11px; color:var(--dim); margin:6px 0;">Use an IP/FQDN your machine can resolve, or an alias from your <code>~/.ssh/config</code>. Build in the VS Code terminal with <code>make</code> (Makefile auto-generated).</div>
+    <pre id="vcUrl"></pre>
+    <div style="display:flex; gap:8px; margin-top:8px;">
+      <button class="copy" onclick="copyText(document.getElementById('vcUrl').textContent)">Copy URL</button>
+      <a class="btn btn-green" id="vcOpen" href="#" target="_blank" style="text-decoration:none;">Open in VS Code</a>
+      <button class="btn btn-ghost" onclick="hideVscode()" style="margin-left:auto;">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="submitModal" onclick="if(event.target===this)hideSubmit()">
+  <div class="modal">
+    <h2>📤 Submit Project</h2>
+    <div class="row"><b>Project:</b> <span id="subProject"></span></div>
+    <div class="row"><b>Key:</b> <input id="subKeyInput" placeholder="paste your submission key" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:12px;width:260px;outline:none;"></div>
+    <div class="row" id="subResult" style="min-height:18px;"></div>
+    <div style="display:flex; gap:8px; margin-top:8px;">
+      <button class="btn btn-primary" id="subBtn" onclick="doSubmit()">Submit</button>
+      <button class="btn btn-ghost" onclick="hideSubmit()" style="margin-left:auto;">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="admin-bg" id="adminPanel">
+  <div class="admin-wrap">
+    <div class="admin-head">
+      <h2>🎓 Admin — Classes, Students & Keys</h2>
+      <button class="btn btn-ghost" onclick="hideAdmin()">✕ Close</button>
+    </div>
+    <div class="admin-body">
+      <div class="admin-left">
+        <div class="admin-section">
+          <div class="admin-label">New Class</div>
+          <input class="admin-input" id="className" placeholder="Class name (e.g. FN6805 AY26)">
+          <input class="admin-input" id="classCourse" placeholder="Course (e.g. FN6805)">
+          <input class="admin-input" id="classCohort" placeholder="Cohort (e.g. AY26)">
+          <button class="btn btn-primary" onclick="createClass()">+ Create Class</button>
+        </div>
+        <div class="admin-label" style="margin-top:14px;">Remote collector (Worker)</div>
+        <input class="admin-input" id="workerUrl" placeholder="https://cppbox-submit.<you>.workers.dev">
+        <div style="display:flex;gap:6px;">
+          <input class="admin-input" id="workerSecret" type="password" placeholder="Admin secret (same as the Worker's ADMIN_SECRET)" style="margin-bottom:0">
+          <button class="mini" type="button" onclick="genWorkerSecret()" title="Generate a strong 256-bit secret">🎲</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+          <button class="btn btn-primary" onclick="saveWorkerSettings()">Save</button>
+          <span class="hint" id="workerStatus"></span>
+        </div>
+        <div class="admin-label" style="margin-top:14px;">Classes</div>
+        <div id="adminClassList"></div>
+      </div>
+      <div class="admin-right" id="adminRight">
+        <div class="admin-empty">Select a class to manage students, assignments, and keys.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Assignment grid -->
+<div class="grid-panel" id="gridPanel">
+  <div class="grid-head">
+    <h3 id="gridTitle">Assignment</h3>
+    <span class="hint" id="gridSummary"></span>
+    <button class="mini" onclick="gridRefresh()">↻ Refresh</button>
+    <button class="btn btn-ghost" style="margin-left:auto" onclick="hideGrid()">✕ Close</button>
+  </div>
+  <div class="grid-body" id="gridBody"></div>
+</div>
+
+<!-- Marking editor -->
+<div class="marker" id="markerPanel">
+  <div class="marker-head">
+    <h3 id="markerTitle">Marking</h3>
+    <span class="hint" id="markerMeta"></span>
+    <button class="mini" onclick="saveFeedbackDraft()">Save draft</button>
+    <button class="btn btn-green" onclick="publishFeedback()">✓ Publish feedback</button>
+    <button class="btn btn-ghost" style="margin-left:auto" onclick="hideMarker()">✕ Close</button>
+  </div>
+  <div class="marker-body">
+    <div class="marker-left">
+      <div class="marker-files" id="markerFiles"></div>
+      <div class="marker-code" id="markerCode"></div>
+    </div>
+    <div class="marker-right">
+      <textarea id="feedbackTa" placeholder="# Feedback&#10;&#10;Type @ to reference a file (e.g. @main.cpp)..."></textarea>
+      <div class="marker-toolbar">
+        <span class="hint">Score</span>
+        <input class="admin-input" id="feedbackScore" placeholder="e.g. 85" style="width:90px;margin-bottom:0">
+        <button class="mini" onclick="emailFeedback()">✉ Email feedback</button>
+        <span class="hint" id="feedbackStatus"></span>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="ac-pop" id="acPop"></div>
+
+<script>
+// ── C++ keyword sets by version ──────────────────────────────────────────
+const KW_BASE = 'alignas alignof and and_eq asm auto bitand bitor bool break case catch char char16_t char32_t class compl const const_cast constexpr continue decltype default delete do double dynamic_cast else enum explicit export extern false float for friend goto if inline int long mutable namespace new noexcept not not_eq nullptr operator or or_eq private protected public register reinterpret_cast return short signed sizeof static static_assert static_cast struct switch template this thread_local throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while xor xor_eq'.split(' ');
+const KW_CPP20 = KW_BASE.concat('char8_t concept requires co_await co_return co_yield consteval constinit'.split(' '));
+const KW_CPP23 = KW_CPP20.slice(); // C++23 adds no new core keywords beyond C++20
+function kwObj(std){ const a = std==='c++17'?KW_BASE : std==='c++20'?KW_CPP20 : KW_CPP23; const o={}; a.forEach(k=>o[k]=true); return o; }
+function cppMode(std){ return { name:'text/x-c++src', keywords: kwObj(std), types:{'std':true}, builtin:{'std':true} }; }
+
+// ── Themes ───────────────────────────────────────────────────────────────
+const THEMES = {
+  'material-ocean': { kind:'dark', cm:'material-ocean', vars:{'--bg':'#0f111a','--surface':'#1a1d2e','--surface2':'#252840','--border':'#2d3154','--text':'#cdd6f4','--dim':'#6c7086','--accent':'#89b4fa','--green':'#a6e3a1','--red':'#f38ba8','--yellow':'#f9e2af'} },
+  'dracula':        { kind:'dark', cm:'dracula',        vars:{'--bg':'#282a36','--surface':'#21222c','--surface2':'#343746','--border':'#44475a','--text':'#f8f8f2','--dim':'#6272a4','--accent':'#bd93f9','--green':'#50fa7b','--red':'#ff5555','--yellow':'#f1fa8c'} },
+  'blackboard':     { kind:'dark', cm:'blackboard',     vars:{'--bg':'#0c1021','--surface':'#15192b','--surface2':'#1f2438','--border':'#2a3050','--text':'#e8e8e8','--dim':'#5f6a8a','--accent':'#7aa2ff','--green':'#7fd884','--red':'#ff6b6b','--yellow':'#ffd866'} },
+  'eclipse':        { kind:'light', cm:'eclipse',       vars:{'--bg':'#f7f7f7','--surface':'#efefef','--surface2':'#e2e2e2','--border':'#cfcfcf','--text':'#1b1b1b','--dim':'#777','--accent':'#1a73e8','--green':'#1e8e3e','--red':'#d93025','--yellow':'#b26a00'} },
+  'idea':           { kind:'light', cm:'idea',          vars:{'--bg':'#ffffff','--surface':'#f4f4f6','--surface2':'#e6e6ea','--border':'#d4d4d8','--text':'#1e1e1e','--dim':'#808088','--accent':'#2a7de1','--green':'#21a766','--red':'#d23e3e','--yellow':'#c47f00'} },
+  'default':        { kind:'light', cm:'default',       vars:{'--bg':'#ffffff','--surface':'#f5f5f5','--surface2':'#e8e8e8','--border':'#d0d0d0','--text':'#222','--dim':'#888','--accent':'#0a66c2','--green':'#097d3a','--red':'#c0271c','--yellow':'#9a6a00'} },
+};
+
+// hoisted state (must precede editor init: CodeMirror invokes lint/handlers during fromTextArea)
+let projects=[], project=null, tree=null;
+let openTabs=[], activeIdx=-1, outTab='output';
+let vscodeInfo=null;
+let lintTimer=null, lintSeq=0, autoSaveTimer=null;
+let lsp={ws:null,ready:false,workspace:null,reqId:1,pending:{},openUri:null,version:0};
+let hoverTimer=null;
+let expandedDirs=new Set();
+let lspDiags={};
+let editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
+  mode: cppMode('c++23'), theme:'material-ocean', lineNumbers:true, indentUnit:2, tabSize:2, autofocus:true,
+  gutters:['CodeMirror-lint-markers'], hintOptions:{hint:clangHint, completeSingle:false},
+  lint:{ async:true, getAnnotations:lintGetAnnotations },
+  extraKeys:{ 'Ctrl-Enter':runCode,'Cmd-Enter':runCode,'Ctrl-S':saveActiveFile,'Cmd-S':saveActiveFile,
+    'Ctrl-F':saveAndFormat,'Cmd-F':saveAndFormat,'Ctrl-Space':'autocomplete','Shift-Space':'autocomplete' },
+});
+
+// (state hoisted above editor init)
+
+// ── API ──────────────────────────────────────────────────────────────────
+async function api(method, url, body){
+  const o={method,headers:{}};
+  if(body!==undefined){ o.headers['Content-Type']='application/json'; o.body=JSON.stringify(body); }
+  const r=await fetch(url,o);
+  if(!r.ok){ let e; try{e=(await r.json()).detail;}catch(_){e=r.statusText;} throw new Error(e); }
+  return r.json();
+}
+
+// ── Projects ─────────────────────────────────────────────────────────────
+async function loadProjects(){ projects=await api('GET','/api/projects'); renderProjects(); }
+function renderProjects(){
+  const el=document.getElementById('projList');
+  if(!projects.length){ el.innerHTML='<div style="padding:24px 12px;color:var(--dim);font-size:12px;text-align:center">No projects yet.<br>Click + New Project</div>'; return; }
+  el.innerHTML=projects.map(p=>`
+    <div class="proj-item ${project&&p.id===project.id?'active':''}" onclick="openProject('${p.id}')">
+      <div class="t"><span>${p.local_path?'💻 ':''}${esc(p.title)}</span><button class="del" onclick="event.stopPropagation();deleteProject('${p.id}')">×</button></div>
+      <div class="std">${p.cpp_standard} · ${timeAgo(p.updated_at)}</div>
+    </div>`).join('');
+}
+async function createProject(){
+  try{
+    const title=prompt('Project name:','Untitled')||'Untitled';
+    if(!title)return;
+    const localPath=prompt('Local path (optional, for Google Drive sync):','')||'';
+    const p=await api('POST','/api/projects',{title, cpp_standard:document.getElementById('stdSelect').value, local_path:localPath||null});
+    await loadProjects(); await openProject(p.id);
+  }catch(e){ flashErr(e); }
+}
+async function openProject(id){
+  try{
+    if(activeIdx>=0 && openTabs[activeIdx] && openTabs[activeIdx].dirty) await saveActiveFile();
+    project=await api('GET',`/api/projects/${id}`);
+  document.getElementById('titleInput').value=project.title;
+  document.getElementById('stdSelect').value=project.cpp_standard;
+  applyStd(project.cpp_standard);
+  document.getElementById('treeTitle').textContent='Files · '+project.title;
+  if(project.local_path) document.getElementById('treeTitle').textContent+=' 📁'+project.local_path;
+  openTabs=[]; activeIdx=-1; renderTabs();
+  await loadTree();
+  // open main.cpp if present
+  const mainPath=findFile(tree,'main.cpp');
+  if(mainPath) await openFile(mainPath); else { editor.setValue(''); setStatus(''); }
+  renderProjects();
+  }catch(e){ flashErr(e); }
+}
+async function deleteProject(id){
+  if(!confirm('Move this project to Trash? You can restore or permanently delete it later.'))return;
+  try{
+    await api('DELETE',`/api/projects/${id}`);
+    if(project&&project.id===id){ project=null; openTabs=[]; activeIdx=-1; renderTabs(); editor.setValue(''); loadTreeRefresh(); }
+    await loadProjects(); await loadTrash();
+    setStatus('Moved to Trash');
+  }catch(e){ flashErr(e); }
+}
+
+// ── Trash ────────────────────────────────────────────────────────────────
+let trash=[];
+async function loadTrash(){ try{ trash=await api('GET','/api/trash'); renderTrash(); }catch(e){ flashErr(e); } }
+function renderTrash(){
+  document.getElementById('trashCount').textContent=trash.length?('('+trash.length+')'):'';
+  const el=document.getElementById('trashBody');
+  if(!trash.length){ el.innerHTML='<div class="trash-item" style="color:var(--dim)">Trash is empty</div>'; return; }
+  el.innerHTML=trash.map(p=>`
+    <div class="trash-item">
+      <div class="t" onclick="openProject('${p.id}')" title="Click to review files"><span>${esc(p.title)}</span></div>
+      <div class="meta">${p.cpp_standard} · deleted ${timeAgo(p.deleted_at)}</div>
+      <div class="acts" style="margin-top:4px;">
+        <button class="mini-btn" onclick="restoreProject('${p.id}')">↩ Restore</button>
+        <button class="mini-btn del" onclick="purgeProject('${p.id}')">🗑 Delete forever</button>
+      </div>
+    </div>`).join('');
+}
+function toggleTrash(){
+  const b=document.getElementById('trashBody'); const open=b.classList.toggle('open');
+  document.getElementById('trashCaret').textContent=open?'▾':'▸';
+  if(open) loadTrash();
+}
+async function restoreProject(id){
+  try{ await api('POST',`/api/projects/${id}/restore`); await loadProjects(); await loadTrash(); setStatus('Restored'); }
+  catch(e){ flashErr(e); }
+}
+async function purgeProject(id){
+  const p=trash.find(x=>x.id===id);
+  if(!confirm('Permanently delete "'+(p?p.title:id)+'"? This cannot be undone.'))return;
+  try{ await api('DELETE',`/api/projects/${id}/purge`); if(project&&project.id===id){ project=null; openTabs=[]; activeIdx=-1; renderTabs(); editor.setValue(''); loadTreeRefresh(); } await loadProjects(); await loadTrash(); setStatus('Deleted forever'); }
+  catch(e){ flashErr(e); }
+}
+function findFile(node, name){ if(node.type==='file'&&node.name===name)return node.path; if(node.children)for(const c of node.children){const r=findFile(c,name);if(r)return r;} return null; }
+
+// ── File tree ────────────────────────────────────────────────────────────
+async function loadTree(){ tree=await api('GET',`/api/projects/${project.id}/tree`); renderTree(); }
+function loadTreeRefresh(){ if(project){api('GET',`/api/projects/${project.id}/tree`).then(t=>{tree=t;renderTree();}); } else { tree=null; document.getElementById('treeBody').innerHTML='<div class="tree-empty">Open a project</div>'; } }
+function renderTree(){
+  const el=document.getElementById('treeBody');
+  if(!project){ el.innerHTML='<div class="tree-empty">Open a project</div>'; return; }
+  el.innerHTML=renderNodes(tree.children||[]);
+}
+function renderNodes(nodes, depth=0){
+  return nodes.map(n=>{
+    const pad='padding-left:'+(8+depth*12)+'px;';
+    if(n.type==='dir'){
+      const open=expandedDirs.has(n.path);
+      const kids=n.children&&n.children.length?renderNodes(n.children,depth+1):'<div class="tree-empty" style="padding:2px 0 2px '+(20+depth*12)+'px">(empty)</div>';
+      return `<div class="tree-row" style="${pad}" data-path="${esc(n.path)}" onclick="toggleFolder(this)">
+        <span class="ico">${open?'📂':'📁'}</span><span>${esc(n.name)}</span>
+        <span class="acts"><button onclick="event.stopPropagation();newFile('${esc(n.path)}')" title="New file">➕</button><button onclick="event.stopPropagation();renameNode('${esc(n.path)}')" title="Rename">✏️</button><button onclick="event.stopPropagation();deleteNode('${esc(n.path)}')" title="Delete">🗑️</button></span>
+      </div><div class="folder-kids" style="display:${open?'block':'none'}">${kids}</div>`;
+    }
+    const active=openTabs[activeIdx]&&openTabs[activeIdx].path===n.path?'active':'';
+    return `<div class="tree-row ${active}" style="${pad}" onclick="openFile('${esc(n.path)}')">
+      <span class="ico">📄</span><span>${esc(n.name)}</span>
+      <span class="acts"><button onclick="event.stopPropagation();renameNode('${esc(n.path)}')" title="Rename">✏️</button><button onclick="event.stopPropagation();deleteNode('${esc(n.path)}')" title="Delete">🗑️</button></span>
+    </div>`;
+  }).join('');
+}
+function toggleFolder(row){
+  const p=row.dataset.path; const kids=row.nextElementSibling; if(!kids||!kids.classList.contains('folder-kids'))return;
+  const open=kids.style.display!=='block';
+  kids.style.display=open?'block':'none';
+  if(open)expandedDirs.add(p); else expandedDirs.delete(p);
+  const ico=row.querySelector('.ico'); if(ico)ico.textContent=open?'📂':'📁';
+}
+function expandAncestors(path){
+  let parts=(path||'').split('/'); parts.pop();
+  let cur='';
+  for(const p of parts){ cur=cur?cur+'/'+p:p; expandedDirs.add(cur); }
+}
+function toggleTree(){
+  const p=document.getElementById('treePanel');
+  p.classList.toggle('collapsed');
+  document.getElementById('expandTree').style.display=p.classList.contains('collapsed')?'block':'none';
+}
+async function newFile(dirPath){
+  if(!project){setStatus('Open or create a project first');return;}
+  try{
+    const base=dirPath?dirPath+'/':'';
+    const name=prompt('New file path:',base+'new.cpp'); if(!name)return;
+    await api('PUT',`/api/projects/${project.id}/file`,{path:name,content:'',is_dir:false});
+    await loadTree(); await openFile(name);
+  }catch(e){ flashErr(e); }
+}
+async function newFolder(dirPath){
+  if(!project){setStatus('Open or create a project first');return;}
+  try{
+    const base=dirPath?dirPath+'/':'';
+    const name=prompt('New folder path:',base+'folder'); if(!name)return;
+    await api('PUT',`/api/projects/${project.id}/file`,{path:name,is_dir:true});
+    await loadTree();
+  }catch(e){ flashErr(e); }
+}
+async function renameNode(path){
+  const np=prompt('Rename/move to:',path); if(!np||np===path)return;
+  await api('POST',`/api/projects/${project.id}/file/move`,{old_path:path,new_path:np});
+  // update open tab path if open
+  const t=openTabs.find(t=>t.path===path); if(t){t.path=np;}
+  await loadTree(); renderTabs();
+}
+async function deleteNode(path){
+  if(!confirm('Delete "'+path+'"?'))return;
+  await api('DELETE',`/api/projects/${project.id}/file?path=${encodeURIComponent(path)}`);
+  // close tab if open
+  const i=openTabs.findIndex(t=>t.path===path);
+  if(i>=0){ openTabs.splice(i,1); if(activeIdx>=openTabs.length)activeIdx=openTabs.length-1; if(activeIdx>=0)showTab(activeIdx); else editor.setValue(''); renderTabs(); }
+  await loadTree();
+}
+
+// ── Tabs ─────────────────────────────────────────────────────────────────
+async function openFile(path){
+  // save current tab first
+  flushCurrentToTab();
+  const r=await api('GET',`/api/projects/${project.id}/file?path=${encodeURIComponent(path)}`);
+  const existing=openTabs.findIndex(t=>t.path===path);
+  if(existing>=0){ activeIdx=existing; }
+  else { openTabs.push({path, content:r.content, dirty:false}); activeIdx=openTabs.length-1; }
+  expandAncestors(path);
+  showTab(activeIdx); renderTabs(); renderTree();
+}
+function flushCurrentToTab(){ if(activeIdx>=0&&openTabs[activeIdx]){ openTabs[activeIdx].content=editor.getValue(); } }
+function showTab(i){
+  activeIdx=i;
+  if(i<0||!openTabs[i]){ editor.setValue(''); return; }
+  editor.setValue(openTabs[i].content);
+  lspDidOpen(); refreshLint(); renderTabs(); renderTree();
+}
+function closeTab(i,e){
+  e.stopPropagation();
+  const t=openTabs[i];
+  if(t.dirty && !confirm('Close without saving?'))return;
+  openTabs.splice(i,1); if(activeIdx>=openTabs.length)activeIdx=openTabs.length-1;
+  if(activeIdx>=0)showTab(activeIdx); else editor.setValue('');
+  renderTabs(); renderTree();
+}
+function renderTabs(){
+  document.getElementById('tabs').innerHTML=openTabs.map((t,i)=>`
+    <div class="tab ${i===activeIdx?'active':''} ${t.dirty?'dirty':''}" onclick="showTab(${i})">
+      <span class="dot"></span><span>${esc(t.path.split('/').pop())}</span>
+      <span class="x" onclick="closeTab(${i},event)">×</span>
+    </div>`).join('');
+}
+async function saveActiveFile(){
+  if(activeIdx<0||!project){setStatus('Nothing to save');return;}
+  try{
+    const code=editor.getValue();
+    if(code.trim()){
+      const f=await api('POST','/api/format',{code});
+      if(f.formatted && f.formatted!==code) editor.setValue(f.formatted);
+    }
+    flushCurrentToTab();
+    const t=openTabs[activeIdx];
+    await api('PUT',`/api/projects/${project.id}/file`,{path:t.path,content:t.content});
+    t.dirty=false; renderTabs(); setStatus('Saved & formatted ✓');
+  }catch(e){ flashErr(e); }
+}
+function scheduleAutoSave(){ if(!project||activeIdx<0)return; clearTimeout(autoSaveTimer); autoSaveTimer=setTimeout(saveActiveFile,1200); }
+
+// ── Title / std ──────────────────────────────────────────────────────────
+async function onTitleChange(){ if(!project)return; project.title=document.getElementById('titleInput').value||'Untitled'; await api('PUT',`/api/projects/${project.id}`,{title:project.title}); document.getElementById('treeTitle').textContent='Files · '+project.title; renderProjects(); }
+async function onStdChange(){
+  applyStd(document.getElementById('stdSelect').value);
+  refreshLint();
+  if(project){ await api('PUT',`/api/projects/${project.id}`,{cpp_standard:document.getElementById('stdSelect').value}); renderProjects(); }
+}
+function applyStd(std){ editor.setOption('mode', cppMode(std)); document.getElementById('clangVer').textContent='clangd · '+std; }
+
+// ── Themes ───────────────────────────────────────────────────────────────
+function buildThemeSelect(){
+  const sel=document.getElementById('themeSelect');
+  const og=Object.assign(document.createElement('optgroup'),{label:'Dark'});
+  const lg=Object.assign(document.createElement('optgroup'),{label:'Light'});
+  for(const[k,v]of Object.entries(THEMES)){ const o=new Option(k,k); (v.kind==='dark'?og:lg).appendChild(o); }
+  sel.appendChild(og); sel.appendChild(lg);
+  sel.value=localStorage.getItem('cppbox_theme')||'material-ocean';
+  applyTheme(sel.value);
+}
+function applyTheme(id){
+  const t=THEMES[id]; if(!t)return;
+  const r=document.documentElement.style;
+  for(const[k,v]of Object.entries(t.vars)) r.setProperty(k,v);
+  editor.setOption('theme', t.cm);
+}
+function onThemeChange(){ const id=document.getElementById('themeSelect').value; applyTheme(id); localStorage.setItem('cppbox_theme',id); }
+
+// ── Run ──────────────────────────────────────────────────────────────────
+async function runCode(){
+  if(!project){setStatus('Open a project first');return;}
+  await saveActiveFile();
+  const stdin=document.getElementById('stdinInput').value;
+  const b=document.getElementById('runBtn'), o=document.getElementById('outputContent');
+  b.disabled=true; b.innerHTML='<span class="spinner"></span> Running...'; o.innerHTML='<span style="color:var(--dim)">Compiling...</span>';
+  try{
+    const res=await api('POST',`/api/projects/${project.id}/run`,{stdin});
+    if(res.stage==='compile'&&!res.ok){ o.innerHTML=`<span class="err">Compilation failed:</span>\n${esc(res.compile_output)}`; switchOutTab('compile'); return; }
+    if(outTab==='compile'){ o.innerHTML=esc(res.compile_output||'(no warnings)'); }
+    else { o.innerHTML=res.run_output?esc(res.run_output):'<span class="ok">Program ran successfully (no output).</span>';
+      if(res.exit_code!==0&&!res.timed_out)o.innerHTML+=`\n\n<span class="err">Exit code: ${res.exit_code}</span>`;
+      if(res.timed_out)o.innerHTML+='\n\n<span class="err">⚠ Timed out</span>'; }
+  }catch(e){ o.innerHTML=`<span class="err">Error:</span> ${esc(e.message)}`; }
+  finally{ b.disabled=false; b.innerHTML='▶ Run'; }
+}
+
+// ── Format ───────────────────────────────────────────────────────────────
+async function formatCode(){
+  const code=editor.getValue(); if(!code.trim())return;
+  const b=document.getElementById('formatBtn'); b.disabled=true; b.innerHTML='<span class="spinner"></span>';
+  try{
+    const res=await api('POST','/api/format',{code});
+    if(res.formatted&&res.formatted!==code){ editor.setValue(res.formatted); if(openTabs[activeIdx])openTabs[activeIdx].dirty=true; renderTabs(); scheduleAutoSave(); setStatus('Formatted ✓'); }
+    else setStatus('Already clean');
+  }catch(e){setStatus('Format error');}
+  finally{ b.disabled=false; b.innerHTML='🎨 Format'; }
+}
+function saveAndFormat(){ saveActiveFile(); setTimeout(formatCode,250); }
+
+// ── Lint ──────────────────────────────────────────────────────────────────
+function diagToAnns(d){
+  const r=d.range||{}; const s=r.start||{line:0,character:0}; const e=r.end||s;
+  const from=CodeMirror.Pos(s.line,s.character);
+  let to=CodeMirror.Pos(e.line,e.character);
+  if(from.line===to.line&&from.ch===to.ch)to=CodeMirror.Pos(to.line,to.ch+1);
+  const sev=d.severity===1?'error':d.severity===2?'warning':'info';
+  return {from, to, message:d.message, severity:sev};
+}
+function lintGetAnnotations(text, updateLinting){
+  // Primary source: clangd (carries compiler errors + clang-tidy hints)
+  if(lsp.ready && lsp.openUri){
+    updateLinting((lspDiags[lsp.openUri]||[]).map(diagToAnns));
+    return;
+  }
+  // Fallback before clangd is ready: debounced -fsyntax-only
+  clearTimeout(lintTimer);
+  lintTimer=setTimeout(async()=>{
+    const seq=++lintSeq;
+    if(!project||activeIdx<0){updateLinting([]);return;}
+    const files=openTabs.map(t=>({name:baseName(t.path),content:t.content}));
+    const entry=baseName(openTabs[activeIdx].path);
+    try{
+      const res=await api('POST','/api/check',{files, std:document.getElementById('stdSelect').value, entry});
+      if(seq!==lintSeq)return;
+      const anns=(res.diagnostics||[]).filter(d=>d.file===entry).map(d=>{
+        const l=Math.max(0,d.line-1), c=Math.max(0,d.col-1);
+        return {from:CodeMirror.Pos(l,c), to:CodeMirror.Pos(l,c+1), message:d.message, severity:d.severity==='error'?'error':d.severity==='warning'?'warning':'info'};
+      });
+      updateLinting(anns);
+    }catch(e){}
+  },600);
+}
+function refreshLint(){ clearTimeout(lintTimer); if(editor.performLint)editor.performLint(); }
+function baseName(p){ return (p||'').split('/').pop(); }
+
+// clangd LSP ──────────────────────────────────────────────────────────────
+function lspUri(path){ return 'file://'+(lsp.workspace||'/tmp/cppbox')+'/'+(project?project.id+'/':'')+(path||''); }
+function lspSend(method,params){ const id=lsp.reqId++; return new Promise(res=>{ lsp.pending[id]=res; lsp.ws.send(JSON.stringify({jsonrpc:'2.0',id,method,params})); }); }
+function lspNotify(method,params){ if(lsp.ws&&lsp.ws.readyState===1)lsp.ws.send(JSON.stringify({jsonrpc:'2.0',method,params})); }
+function lspConnect(){
+  const proto=location.protocol==='https:'?'wss':'ws';
+  lsp.ws=new WebSocket(`${proto}://${location.host}/ws/lsp`);
+  lsp.ws.onopen=async()=>{
+    try{
+      const sync=await lspSend('$/sync',{std:document.getElementById('stdSelect').value, files:syncFiles()});
+      lsp.workspace=sync.workspace;
+      await lspSend('initialize',{processId:null,rootUri:'file://'+lsp.workspace,capabilities:{},initializationOptions:{fallbackFlags:['-std='+document.getElementById('stdSelect').value]}});
+      lspNotify('initialized',{}); lsp.ready=true; lspDidOpen(); setStatus('clangd ready');
+    }catch(e){console.warn('lsp init',e);}
+  };
+  lsp.ws.onmessage=ev=>{
+    const m=JSON.parse(ev.data);
+    if(m.id!=null&&lsp.pending[m.id]){const r=lsp.pending[m.id];delete lsp.pending[m.id];r(m.result);}
+    if(m.method==='textDocument/publishDiagnostics'){
+      const uri=m.params&&m.params.uri;
+      lspDiags[uri]=(m.params&&m.params.diagnostics)||[];
+      if(uri===lsp.openUri && editor.performLint) editor.performLint();
+    }
+  };
+  lsp.ws.onclose=()=>{lsp.ready=false;lsp.openUri=null;setTimeout(lspConnect,1500);};
+}
+function syncFiles(){ return openTabs.map(t=>({name:(project?project.id+'/':'')+t.path, content:t.content})); }
+function lspDidOpen(){ if(!lsp.ready||activeIdx<0||!openTabs[activeIdx])return; lspSend('$/sync',{std:document.getElementById('stdSelect').value,files:syncFiles()}).then(r=>lsp.workspace=r.workspace); const path=openTabs[activeIdx].path; lsp.openUri=lspUri(path); lsp.version=1; lspNotify('textDocument/didOpen',{textDocument:{uri:lsp.openUri,languageId:'cpp',version:lsp.version,text:editor.getValue()}}); }
+function lspDidChange(){ if(!lsp.ready||!lsp.openUri)return; lsp.version++; lspNotify('textDocument/didChange',{textDocument:{uri:lsp.openUri,version:lsp.version},contentChanges:[{text:editor.getValue()}]}); }
+function clangHint(cm){
+  const cur=cm.getCursor(), tok=cm.getTokenAt(cur), from=CodeMirror.Pos(cur.line,tok.start);
+  return lspSend('textDocument/completion',{textDocument:{uri:lsp.openUri},position:{line:cur.line,character:cur.ch}}).then(res=>{
+    let items=res||[]; if(items&&items.items)items=items.items;
+    if(!items.length)return{list:[],from,to:cur};
+    return{from,to:cur,list:items.map(it=>({text:it.insertText||it.label,displayText:it.label,detail:it.detail}))};
+  }).catch(()=>({list:[],from,to:cur}));
+}
+editor.on('inputRead',(cm,ch)=>{ if(!lsp.ready||ch.origin!=='+input')return; const c=ch.text[0]; if(c==='.'||c==='>'||c===':')setTimeout(()=>cm.showHint({hint:clangHint,completeSingle:false}),0); });
+let hoverEl=document.createElement('div'); hoverEl.className='lsp-hover'; hoverEl.style.display='none'; document.body.appendChild(hoverEl);
+function onEditorMouseMove(e){ if(!lsp.ready)return; clearTimeout(hoverTimer); hoverTimer=setTimeout(async()=>{ const pos=editor.coordsChar({left:e.clientX,top:e.clientY},'page'); if(!pos||pos.outside){hoverEl.style.display='none';return;} try{ const res=await lspSend('textDocument/hover',{textDocument:{uri:lsp.openUri},position:{line:pos.line,character:pos.ch}}); if(!res||!res.contents){hoverEl.style.display='none';return;} let t=res.contents; if(typeof t==='object')t=t.value; if(!t||!t.trim()){hoverEl.style.display='none';return;} hoverEl.textContent=t; hoverEl.style.left=(e.clientX+14)+'px'; hoverEl.style.top=(e.clientY+14)+'px'; hoverEl.style.display='block'; }catch(_){hoverEl.style.display='none';} },450); hoverEl.style.left=(e.clientX+14)+'px'; hoverEl.style.top=(e.clientY+14)+'px'; }
+editor.on('scroll',()=>hoverEl.style.display='none');
+
+// ── Output tabs / resize ─────────────────────────────────────────────────
+function switchOutTab(t){ outTab=t; document.querySelectorAll('.out-tab').forEach(x=>x.classList.remove('active')); document.querySelector(`.out-tab[data-tab="${t}"]`).classList.add('active'); }
+(function(){const h=document.getElementById('resizeHandle'),p=document.getElementById('outputPanel');let d=false;h.addEventListener('mousedown',e=>{d=true;e.preventDefault();});document.addEventListener('mousemove',e=>{if(!d)return;const hh=Math.max(80,Math.min(window.innerHeight-e.clientY-40,window.innerHeight*.5));p.style.height=hh+'px';});document.addEventListener('mouseup',()=>d=false);})();
+
+// ── VS Code modal ────────────────────────────────────────────────────────
+async function showVscode(){
+  try{
+    if(!vscodeInfo)vscodeInfo=await api('GET','/api/vscode');
+  document.getElementById('vcUser').textContent=vscodeInfo.ssh_user;
+  const projPath=project?vscodeInfo.projects_root+'/'+project.id:vscodeInfo.projects_root;
+  document.getElementById('vcPath').textContent=projPath;
+  window._vcProjPath=projPath;
+  const saved=localStorage.getItem('cppbox_ssh_host');
+  document.getElementById('vcHostInput').value=saved||vscodeInfo.ssh_host;
+  const ips=vscodeInfo.ips||[];
+  document.getElementById('vcIps').innerHTML=ips.length?('suggest: '+ips.map(ip=>`<a href="#" onclick="event.preventDefault();document.getElementById('vcHostInput').value='${ip}';regenVscode()" style="color:var(--accent);margin-left:6px">${ip}</a>`).join('')):'';
+  regenVscode();
+  document.getElementById('vscodeModal').classList.add('show');
+  }catch(e){ flashErr(e); }
+}
+function regenVscode(){
+  if(!vscodeInfo)return;
+  const host=(document.getElementById('vcHostInput').value||'').trim();
+  const url=`vscode://vscode-remote/ssh-remote+${vscodeInfo.ssh_user}@${host}${window._vcProjPath}`;
+  document.getElementById('vcUrl').textContent=url;
+  document.getElementById('vcOpen').href=url;
+  if(host)localStorage.setItem('cppbox_ssh_host',host);
+}
+function hideVscode(){ document.getElementById('vscodeModal').classList.remove('show'); }
+
+// ── Submit modal ─────────────────────────────────────────────────────────
+function showSubmit(){
+  if(!project){ setStatus('Open a project to submit'); return; }
+  document.getElementById('subProject').textContent=project.title;
+  document.getElementById('subResult').textContent='';
+  document.getElementById('subKeyInput').value=localStorage.getItem('cppbox_subkey')||'';
+  document.getElementById('submitModal').classList.add('show');
+}
+function hideSubmit(){ document.getElementById('submitModal').classList.remove('show'); }
+async function doSubmit(){
+  if(!project)return;
+  const key=document.getElementById('subKeyInput').value.trim();
+  const resEl=document.getElementById('subResult');
+  if(!key){ resEl.innerHTML='<span class="err">Enter a submission key</span>'; return; }
+  const b=document.getElementById('subBtn');
+  b.disabled=true; b.textContent='Submitting…'; resEl.textContent='';
+  try{
+    await saveActiveFile();
+    const r=await api('POST','/api/submit',{key, project_id:project.id});
+    localStorage.setItem('cppbox_subkey',key);
+    resEl.innerHTML='<span class="ok">Submitted ✓</span> '+esc(r.zip)+' <span style="color:var(--dim)">(submission #'+r.counter+')</span>';
+  }catch(e){
+    resEl.innerHTML='<span class="err">'+esc(e.message)+'</span>';
+  }finally{
+    b.disabled=false; b.textContent='Submit';
+  }
+}
+function copyText(t){ navigator.clipboard&&navigator.clipboard.writeText(t); setStatus('Copied'); }
+
+// ── Admin panel ─────────────────────────────────────────────────────────
+let adminClasses=[], adminSelected=null, adminDetail=null;
+function showAdmin(){ document.getElementById('adminPanel').classList.add('show'); loadAdminClasses(); loadWorkerSettings(); }
+async function loadWorkerSettings(){
+  try{ const s=await api('GET','/api/admin/settings/worker');
+    document.getElementById('workerUrl').value=s.worker_url||'';
+    document.getElementById('workerStatus').textContent=s.configured?'✓ configured':'not set';
+    document.getElementById('workerSecret').value='';   // never echo the secret back into the field
+  }catch(e){}
+}
+async function saveWorkerSettings(){
+  const url=document.getElementById('workerUrl').value.trim();
+  const secret=document.getElementById('workerSecret').value;
+  try{ const body={worker_url:url}; if(secret) body.worker_secret=secret;
+    const s=await api('PUT','/api/admin/settings/worker',body);
+    document.getElementById('workerStatus').textContent=s.configured?'✓ saved & configured':'saved (need URL + secret)';
+    document.getElementById('workerSecret').value='';
+    setStatus('Worker settings saved');
+  }catch(e){ flashErr(e); }
+}
+function genWorkerSecret(){
+  const a=new Uint8Array(32); crypto.getRandomValues(a);   // 256-bit from the browser CSPRNG
+  document.getElementById('workerSecret').value=[...a].map(b=>b.toString(16).padStart(2,'0')).join('');
+  document.getElementById('workerStatus').textContent='generated — also run: wrangler secret put ADMIN_SECRET (paste this)';
+}
+function hideAdmin(){ document.getElementById('adminPanel').classList.remove('show'); }
+
+async function loadAdminClasses(){
+  try{ adminClasses=await api('GET','/api/admin/classes'); renderAdminClassList(); }catch(e){ flashErr(e); }
+}
+function renderAdminClassList(){
+  const el=document.getElementById('adminClassList');
+  if(!adminClasses.length){ el.innerHTML='<div class="hint">No classes yet.</div>'; return; }
+  el.innerHTML=adminClasses.map(c=>`
+    <div class="admin-class-item ${adminSelected===c.id?'active':''}" onclick="selectClass('${c.id}')">
+      <div class="nm">${esc(c.name)}</div>
+      <div class="sub">${esc(c.course)} · ${esc(c.cohort)} · ${c.students} students · ${c.assignments} asg</div>
+    </div>`).join('');
+}
+async function selectClass(cid){
+  adminSelected=cid;
+  try{
+    adminDetail=await api('GET',`/api/admin/classes/${cid}`);
+    renderAdminClassList();
+    renderAdminRight();
+  }catch(e){ flashErr(e); }
+}
+function renderAdminRight(){
+  const el=document.getElementById('adminRight');
+  const d=adminDetail;
+  if(!d){ el.innerHTML='<div class="admin-empty">Select a class to manage students, assignments, and keys.</div>'; return; }
+  el.innerHTML=`
+    <div class="admin-class-head">
+      <h3>${esc(d.name)}</h3>
+      <span class="meta">${esc(d.course)} · ${esc(d.cohort)} · ${d.students} students · ${d.assignments} assignments</span>
+      <button class="mini" style="margin-left:auto;color:var(--red)" onclick="deleteClass('${d.id}')">Delete class</button>
+    </div>
+    <div class="admin-section">
+      <div class="admin-label">Import students</div>
+      <textarea class="admin-textarea" id="importText" placeholder="serial,name,email — one per line:&#10;1,Alice,alice@school.edu&#10;2,Bob,bob@school.edu&#10;10,Carol &lt;carol@school.edu&gt;"></textarea>
+      <button class="btn btn-primary" onclick="importStudents()">Import</button>
+      <span id="importResult" class="hint" style="margin-left:10px;"></span>
+    </div>
+    <div class="admin-section">
+      <div class="admin-label">Roster (${d.student_list.length})</div>
+      ${d.student_list.map(s=>`<div class="roster-row"><span class="asg">${s.serial!=null?String(s.serial).padStart(2,'0'):'—'}</span><span class="nm">${esc(s.name)}</span><span class="em">${esc(s.email||'—')}</span></div>`).join('')||'<div class="hint">No students yet.</div>'}
+    </div>
+    <div class="admin-section">
+      <div class="admin-label">Create assignment (generates a key for every student)</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input class="admin-input" id="asgName" placeholder="Assignment name (e.g. Assignment 1)" style="flex:1;margin-bottom:0;">
+        <input class="admin-input" id="asgSlot" type="number" value="${(d.assignment_list.length||0)+1}" style="width:70px;margin-bottom:0;" title="Slot number">
+        <button class="btn btn-green" onclick="createAssignment()">Create &amp; Generate Keys</button>
+      </div>
+    </div>
+    <div class="admin-section">
+      <div class="admin-label">Assignments</div>
+      ${d.assignment_list.length ? d.assignment_list.map(a=>`
+        <div class="asg-card">
+          <div class="top"><span class="nm">${esc(a.name)}</span><span class="asg">slot ${a.slot}</span></div>
+          <div class="row">
+            <input class="admin-input" id="root_${a.id}" placeholder="Root folder path (e.g. /home/you/Asgn1)" value="${esc(a.root_folder||'')}" style="flex:1">
+            <button class="mini" onclick="setAsgRoot('${a.id}')">Set root</button>
+          </div>
+          <div class="row">
+            <input class="admin-input" id="zips_${a.id}" placeholder="Collected zips folder" style="flex:1">
+            <button class="btn btn-primary" onclick="organizeAsg('${a.id}')">Organize</button>
+            <button class="btn" onclick="pullAsg('${a.id}')">⬇ Pull</button>
+            <button class="btn btn-green" onclick="openWorkspaceForAsg('${a.id}')">Open workspace</button>
+            <button class="btn" onclick="viewGrid('${a.id}')">Grid</button>
+          </div>
+          <span class="hint" id="asgResult_${a.id}"></span>
+        </div>`).join('') : '<div class="hint">No assignments yet.</div>'}
+    </div>
+    <div class="admin-section">
+      <div class="admin-label">Keys</div>
+      <div id="keysList"><div class="hint">Loading…</div></div>
+    </div>`;
+  loadClassKeys();
+}
+async function loadClassKeys(){
+  if(!adminSelected)return;
+  try{
+    const keys=await api('GET',`/api/admin/classes/${adminSelected}/keys`);
+    const el=document.getElementById('keysList');
+    if(!keys.length){ el.innerHTML='<div class="hint">No keys yet. Create an assignment to generate them.</div>'; return; }
+    el.innerHTML=keys.map(k=>`
+      <div class="key-row">
+        <div class="top">
+          <span class="who">${esc(k.student_name)}</span>
+          <span class="asg">${esc(k.assignment||('slot '+k.slot))}</span>
+          ${k.email?`<span class="hint">${esc(k.email)}</span>`:''}
+        </div>
+        <div class="keyline">
+          <code>${esc(k.key)}</code>
+          <span class="acts">
+            <button class="mini" onclick="copyText('${k.key}')">Copy</button>
+            ${k.email?`<a class="mini" href="${mailtoFor(k)}">✉ Email key</a>`:''}
+          </span>
+        </div>
+      </div>`).join('');
+  }catch(e){ flashErr(e); }
+}
+function mailtoFor(k){
+  const subject=`[${k.course} ${k.cohort}] ${k.assignment||('Slot '+k.slot)} - Submission Key`;
+  const body=`Hi ${k.student_name},\n\nYour submission key for ${k.assignment||('assignment slot '+k.slot)} (${k.course}, ${k.cohort}) is:\n\n    ${k.key}\n\nOpen your project in CPPBox, click Submit, and paste this key.\n\nRegards,\nInstructor`;
+  return `mailto:${encodeURIComponent(k.email||'')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+async function createClass(){
+  const name=document.getElementById('className').value.trim();
+  const course=document.getElementById('classCourse').value.trim();
+  const cohort=document.getElementById('classCohort').value.trim();
+  if(!name||!course||!cohort){ flashErr(new Error('Fill in name, course, and cohort')); return; }
+  try{
+    await api('POST','/api/admin/classes',{name,course,cohort});
+    document.getElementById('className').value='';
+    document.getElementById('classCourse').value='';
+    document.getElementById('classCohort').value='';
+    await loadAdminClasses();
+  }catch(e){ flashErr(e); }
+}
+async function deleteClass(cid){
+  if(!confirm('Delete this class, its students, and assignments?'))return;
+  try{
+    await api('DELETE',`/api/admin/classes/${cid}`);
+    if(adminSelected===cid){ adminSelected=null; adminDetail=null; renderAdminRight(); }
+    await loadAdminClasses();
+  }catch(e){ flashErr(e); }
+}
+async function importStudents(){
+  const text=document.getElementById('importText').value;
+  const resEl=document.getElementById('importResult');
+  if(!text.trim()){ resEl.textContent='Paste a roster first'; return; }
+  try{
+    const r=await api('POST',`/api/admin/classes/${adminSelected}/students`,{text});
+    resEl.textContent=`Added ${r.added} student(s)`+(r.errors&&r.errors.length?` · ${r.errors.length} line(s) skipped (need a numeric serial first)`:'');
+    document.getElementById('importText').value='';
+    await selectClass(adminSelected);
+  }catch(e){ flashErr(e); }
+}
+async function createAssignment(){
+  const name=document.getElementById('asgName').value.trim();
+  const slot=parseInt(document.getElementById('asgSlot').value,10);
+  if(!name||!slot){ flashErr(new Error('Enter assignment name and slot')); return; }
+  try{
+    const r=await api('POST',`/api/admin/classes/${adminSelected}/assignments`,{name,slot});
+    await selectClass(adminSelected);
+    setStatus(`Generated ${r.keys_generated} key(s)`);
+  }catch(e){ flashErr(e); }
+}
+
+// ── Assignment actions: organize / workspace / grid / marking ───────────
+let markerState={pid:null,files:[],active:null,codeMirror:null,acIndex:-1};
+let gridState={aid:null,data:null};
+
+function _asgById(aid){ return (adminDetail&&adminDetail.assignment_list||[]).find(a=>a.id===aid); }
+async function setAsgRoot(aid){
+  const v=document.getElementById('root_'+aid).value.trim();
+  try{ await api('PUT',`/api/admin/assignments/${aid}/root`,{root_folder:v});
+    if(adminDetail){ const a=_asgById(aid); if(a)a.root_folder=v; }
+    setStatus('Root folder saved');
+  }catch(e){ flashErr(e); }
+}
+async function organizeAsg(aid){
+  const z=document.getElementById('zips_'+aid).value.trim();
+  const res=document.getElementById('asgResult_'+aid);
+  if(!z){ res.textContent='Enter the collected-zips folder first'; return; }
+  res.textContent='Organizing…';
+  try{ const r=await api('POST',`/api/admin/assignments/${aid}/organize`,{zips_folder:z});
+    res.textContent=`Organized ${r.organized.length} · ${r.errors.length} error(s)`;
+  }catch(e){ res.textContent=''; flashErr(e); }
+}
+async function pullAsg(aid){
+  const res=document.getElementById('asgResult_'+aid);
+  res.textContent='Pulling…';
+  try{ const r=await api('POST',`/api/admin/assignments/${aid}/pull`,{});
+    if(r.error){ res.textContent='⚠ '+r.error; return; }
+    res.textContent=`Pulled ${r.pulled} submission(s)`+(r.errors.length?` · ${r.errors.length} error(s)`:'');
+    setStatus(`Pulled ${r.pulled} submission(s); click Organize to unpack`);
+  }catch(e){ res.textContent=''; flashErr(e); }
+}
+async function openWorkspaceForAsg(aid){
+  const a=_asgById(aid);
+  if(!a||!a.root_folder){ flashErr(new Error('Set a root folder first')); return; }
+  try{ const r=await api('POST','/api/workspace/open',{root_folder:a.root_folder,assignment_id:aid});
+    setStatus(`Opened ${r.opened} project(s); they appear in the sidebar`);
+    await loadProjects();
+  }catch(e){ flashErr(e); }
+}
+async function viewGrid(aid){
+  gridState.aid=aid;
+  document.getElementById('gridPanel').classList.add('show');
+  await gridRefresh();
+}
+function hideGrid(){ document.getElementById('gridPanel').classList.remove('show'); }
+async function gridRefresh(){
+  if(!gridState.aid)return;
+  try{ gridState.data=await api('GET',`/api/admin/assignments/${gridState.aid}/grid`);
+    renderGrid();
+  }catch(e){ flashErr(e); }
+}
+function renderGrid(){
+  const d=gridState.data; if(!d)return;
+  document.getElementById('gridTitle').textContent=d.assignment.name;
+  const rows=d.students;
+  const graded=rows.filter(s=>s.status==='graded').length;
+  const sub=rows.filter(s=>s.status!=='none').length;
+  document.getElementById('gridSummary').textContent=`${sub}/${rows.length} submitted · ${graded} graded`;
+  const icon={none:'—',submitted:'📩',graded:'✅'};
+  document.getElementById('gridBody').innerHTML=rows.map(s=>`
+    <div class="grid-row">
+      <span class="sn">${s.serial!=null?String(s.serial).padStart(2,'0'):'—'}</span>
+      <span class="nm">${esc(s.name)} ${s.email?'<span class=hint>'+esc(s.email)+'</span>':''}</span>
+      <span class="grid-score">${s.score?esc(s.score):''}</span>
+      <span class="grid-status" title="${s.status}" onclick="gridClick('${s.student_id}',${s.project_id?`'${s.project_id}'`:'null'})">${icon[s.status]}</span>
+    </div>`).join('');
+}
+function gridClick(sid,pid){
+  if(!pid){ flashErr(new Error('No project for this student. Organize + Open workspace first.')); return; }
+  const s=(gridState.data.students||[]).find(x=>x.student_id===sid);
+  openMarker(pid, s);
+}
+async function openMarker(pid, s){
+  markerState.pid=pid; markerState.active=null; markerState.files=[]; markerState.student=s||null;
+  document.getElementById('markerPanel').classList.add('show');
+  document.getElementById('markerTitle').textContent=s?`Marking · ${String(s.serial||'?').padStart(2,'0')} ${s.name}`:'Marking';
+  document.getElementById('markerMeta').textContent='';
+  document.getElementById('feedbackScore').value=(s&&s.score)||'';
+  document.getElementById('feedbackStatus').textContent='';
+  document.getElementById('feedbackTa').value='';
+  document.getElementById('markerFiles').innerHTML='<span class=hint>Loading…</span>';
+  // lazy init read-only CodeMirror
+  if(!markerState.codeMirror){
+    markerState.codeMirror=CodeMirror(document.getElementById('markerCode'),{mode:'text/x-c++src',theme:editor.getOption('theme'),readonly:true,lineNumbers:true});
+  }
+  markerState.codeMirror.setValue('// select a file');
+  markerState.codeMirror.refresh();
+  await loadMarkerFiles();
+  await loadFeedback();
+}
+function hideMarker(){ document.getElementById('markerPanel').classList.remove('show'); }
+function emailFeedback(){
+  const s=markerState.student;
+  if(!s||!s.email){ flashErr(new Error('No email on file for this student')); return; }
+  const text=document.getElementById('feedbackTa').value;
+  const score=document.getElementById('feedbackScore').value.trim();
+  const subject=`Feedback: ${(s.serial!=null?('#'+s.serial+' '):'')}${s.name}`;
+  const body=text+(score?`\n\nScore: ${score}`:'');
+  window.location.href=`mailto:${encodeURIComponent(s.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+function _flattenFiles(nodes,acc){
+  for(const n of nodes){ if(n.type==='file')acc.push(n.path); else if(n.children)_flattenFiles(n.children,acc); }
+  return acc;
+}
+async function loadMarkerFiles(){
+  try{ const tree=await api('GET',`/api/projects/${markerState.pid}/tree`);
+    markerState.files=_flattenFiles(tree.children||[],[]).filter(p=>p!=='feedback.md');
+    const el=document.getElementById('markerFiles');
+    el.innerHTML=markerState.files.length?markerState.files.map(p=>`<span class="mfile" onclick="showMarkerFile('${p.replace(/'/g,"\\'")}')">${esc(p)}</span>`).join(''):'<span class=hint>No files</span>';
+  }catch(e){ flashErr(e); }
+}
+async function showMarkerFile(path){
+  markerState.active=path;
+  document.querySelectorAll('.mfile').forEach(el=>el.classList.toggle('active',el.textContent===path));
+  try{ const r=await api('GET',`/api/projects/${markerState.pid}/file?path=${encodeURIComponent(path)}`);
+    markerState.codeMirror.setValue(r.content); markerState.codeMirror.refresh();
+  }catch(e){ flashErr(e); }
+}
+async function loadFeedback(){
+  try{ const f=await api('GET',`/api/admin/projects/${markerState.pid}/feedback`);
+    document.getElementById('feedbackTa').value=f.text||'';
+    document.getElementById('feedbackScore').value=f.score||'';
+    document.getElementById('feedbackStatus').textContent=f.graded?'✅ published':'draft';
+  }catch(e){ flashErr(e); }
+}
+async function saveFeedbackDraft(){
+  try{ await api('POST',`/api/admin/projects/${markerState.pid}/feedback`,{text:document.getElementById('feedbackTa').value,score:document.getElementById('feedbackScore').value.trim()||null,publish:false});
+    document.getElementById('feedbackStatus').textContent='saved (draft)';
+  }catch(e){ flashErr(e); }
+}
+async function publishFeedback(){
+  try{ await api('POST',`/api/admin/projects/${markerState.pid}/feedback`,{text:document.getElementById('feedbackTa').value,score:document.getElementById('feedbackScore').value.trim()||null,publish:true});
+    document.getElementById('feedbackStatus').textContent='✅ published';
+    setStatus('Feedback published');
+    if(gridState.aid) gridRefresh();
+  }catch(e){ flashErr(e); }
+}
+// @-autocomplete in feedback textarea
+function _acPos(){ const ta=document.getElementById('feedbackTa'); const v=ta.value.slice(0,ta.selectionStart); const i=v.lastIndexOf('@'); if(i<0)return null; const word=v.slice(i+1); if(/[\s,;()]/.test(word))return null; return {at:i,word,ta}; }
+function feedbackAcShow(matches){
+  const pos=_acPos(); const pop=document.getElementById('acPop');
+  if(!pos||!matches.length){ pop.style.display='none'; return; }
+  markerState.acIndex=0;
+  pop.innerHTML=matches.map((m,i)=>`<div class="ac-item${i===0?' active':''}" onclick="feedbackAcPick('${m.replace(/'/g,"\\'")}')">${esc(m)}</div>`).join('');
+  const r=pos.ta.getBoundingClientRect(); pop.style.display='block'; pop.style.left=(r.left+6)+'px'; pop.style.top=(r.bottom+2)+'px';
+}
+function feedbackAcPick(m){
+  const ta=document.getElementById('feedbackTa'); const pos=_acPos(); if(!pos)return;
+  ta.value=ta.value.slice(0,pos.at+1)+m+ta.value.slice(pos.at+1+pos.word.length);
+  const c=pos.at+1+m.length; ta.focus(); ta.setSelectionRange(c,c); document.getElementById('acPop').style.display='none';
+}
+document.addEventListener('input',e=>{ if(e.target&&e.target.id==='feedbackTa'){ const pos=_acPos(); const pop=document.getElementById('acPop'); if(!pos){pop.style.display='none';return;} const ms=markerState.files.filter(f=>f.toLowerCase().includes(pos.word.toLowerCase())).slice(0,12); feedbackAcShow(ms); } });
+document.addEventListener('keydown',e=>{ if(e.target&&e.target.id==='feedbackTa'){ const pop=document.getElementById('acPop'); if(pop.style.display!=='block')return; const items=pop.querySelectorAll('.ac-item'); if(e.key==='ArrowDown'){e.preventDefault();markerState.acIndex=Math.min(markerState.acIndex+1,items.length-1);updateAcSel(items);}
+    else if(e.key==='ArrowUp'){e.preventDefault();markerState.acIndex=Math.max(markerState.acIndex-1,0);updateAcSel(items);}
+    else if(e.key==='Enter'||e.key==='Tab'){ if(items[markerState.acIndex]){e.preventDefault();feedbackAcPick(items[markerState.acIndex].textContent);} }
+    else if(e.key==='Escape'){ pop.style.display='none'; }
+  } });
+function updateAcSel(items){ items.forEach((el,i)=>el.classList.toggle('active',i===markerState.acIndex)); }
+
+// ── Utils ────────────────────────────────────────────────────────────────
+function esc(s){const d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML;}
+function setStatus(m){document.getElementById('statusText').textContent=m;}
+function flashErr(e){ const m=(e&&e.message)?e.message:String(e); setStatus('⚠ '+m); console.error('[CPPBox]', e); }
+window.addEventListener('unhandledrejection', ev=>{ flashErr(ev.reason); ev.preventDefault(); });
+window.addEventListener('error', ev=>{ if(ev.error)flashErr(ev.error); });
+function timeAgo(iso){if(!iso)return'';const ms=Date.now()-new Date(iso).getTime();const mn=Math.floor(ms/60000);if(mn<1)return'just now';if(mn<60)return mn+'m ago';const h=Math.floor(mn/60);if(h<24)return h+'h ago';return new Date(iso).toLocaleDateString();}
+
+// ── Editor events ────────────────────────────────────────────────────────
+editor.on('change',()=>{ if(activeIdx>=0&&openTabs[activeIdx]){ openTabs[activeIdx].dirty=true; openTabs[activeIdx].content=editor.getValue(); renderTabs(); scheduleAutoSave(); } lspDidChange(); });
+editor.on('mousemove',onEditorMouseMove);
+document.getElementById('titleInput').addEventListener('change',onTitleChange);
+window.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='f')e.preventDefault(); });
+
+// ── Init ─────────────────────────────────────────────────────────────────
+buildThemeSelect();
+lspConnect();
+loadProjects().catch(e=>flashErr(new Error('Backend unreachable or stale (no /api/projects). Restart uvicorn to load new backend: '+e.message)));
+loadTrash().catch(()=>{});
+renderTrash();
+loadTreeRefresh();
+</script>
+</body>
+</html>

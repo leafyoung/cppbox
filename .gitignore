@@ -1,0 +1,50 @@
+# ── Python ──
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# ── Virtual environments ──
+.venv
+
+# ── Runtime data (generated; never source) ──
+# SQLite database (cppbox.db)
+data/
+# per-project working folders (incl. nested student git repos)
+projects/
+# temp compile/run dirs + clangd workspaces
+workdir/
+# submission zips
+submissions/
+
+# ── Cloudflare worker artifacts ──
+worker/node_modules/
+worker/.wrangler/
+worker/wrangler.toml
+worker/_mock_r2/
+worker/_mock_kv.json
+
+# ── SQLite databases (stray) ──
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Logs ──
+*.log
+
+# ── OS / editor ──
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# ── Rust / Cargo build output (Cargo.lock IS committed for apps) ──
+target/
+# Tauri build-generated schema dumps
+src-tauri/gen/
+
+# secret environment variables
+cppbox.key*

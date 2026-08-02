@@ -1,0 +1,18 @@
+# Copy to wrangler.toml and fill in the KV namespace id after creating it.
+name = "cppbox-submit"
+main = "src/index.js"
+compatibility_date = "2024-09-01"
+
+# Object storage for uploaded submissions (transient queue — CPPBox drains it on pull).
+[[r2_buckets]]
+binding = "SUBMISSIONS"
+bucket_name = "cppbox-submissions"
+
+# Holds the valid-keys allowlist under key "valid_keys".
+[[kv_namespaces]]
+binding = "KV"
+id = "REPLACE_WITH_kv_namespace_id"
+
+# Set the admin secret with:  npx wrangler secret put ADMIN_SECRET
+# (do NOT commit the real value). CPPBox must use the same value in
+# CPPBOX_WORKER_SECRET.

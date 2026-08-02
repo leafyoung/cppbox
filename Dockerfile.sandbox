@@ -1,0 +1,48 @@
+# Minimal sandbox for isolated C++ compilation & execution via clang++
+FROM alpine:latest
+
+RUN apk add --no-cache \
+    clang \
+    lld \
+    make \
+    gcc \
+    g++ \
+    git \
+    linux-headers \
+    libc-dev \
+    musl-dev \
+    libc++-dev \
+    coreutils \
+    && rm -rf /var/cache/apk/*
+
+# Create a restricted user for execution
+RUN adduser -D -h /home/sandbox -s /sbin/nologin sandbox
+
+WORKDIR /home/sandbox
+
+# Default command: compile and optionally run
+COPY --chmod=755 <<"EOF" /usr/local/bin/compile.sh
+#!/bin/sh
+set -e
+INPUT="$1"
+OUTPUT="$2"
+TIMEOUT="${3:-30}"
+ulimit -t "$TIMEOUT"
+ulimit -v 262144  # 256MB virtual memory limit
+exec clang++ -std=c++23 -O2 -Wall -Wextra -pedantic -fcolor-diagnostics \
+    "$INPUT" -o "$OUTPUT" 2>&1
+EOF
+
+COPY --chmod=755 <<"EOF" /usr/local/bin/run.sh
+#!/bin/sh
+set -e
+BINARY="$1"
+TIMEOUT="${2:-10}"
+shift 2
+ulimit -t "$TIMEOUT"
+ulimit -v 262144
+exec su sandbox -c "./$BINARY $*" 2>&1
+EOF
+
+USER sandbox
+CMD ["/bin/sh"]
