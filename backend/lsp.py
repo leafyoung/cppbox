@@ -67,7 +67,7 @@ class LspSession:
 
     async def _do_sync(self, ws, msg):
         params = msg.get("params") or {}
-        std = params.get("std", "c++23")
+        std = params.get("std", "c++17")
         files = params.get("files") or []
         for f in files:
             p = self.ws_dir / f["name"]

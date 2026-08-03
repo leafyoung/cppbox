@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         try:
-            await conn.execute(text("ALTER TABLE snippets ADD COLUMN cpp_standard VARCHAR(10) DEFAULT 'c++23'"))
+            await conn.execute(text("ALTER TABLE snippets ADD COLUMN cpp_standard VARCHAR(10) DEFAULT 'c++17'"))
         except Exception:
             pass
         try:
@@ -74,12 +74,12 @@ class RunRequest(BaseModel):
     files: list[FileItem] | None = None
     code: str = ""
     stdin: str = ""
-    std: str = "c++23"
+    std: str = "c++17"
 
 
 class CheckRequest(BaseModel):
     files: list[FileItem]
-    std: str = "c++23"
+    std: str = "c++17"
     entry: str | None = None
 
 
@@ -89,7 +89,7 @@ class FormatRequest(BaseModel):
 
 class ProjectCreate(BaseModel):
     title: str = "Untitled"
-    cpp_standard: str = "c++23"
+    cpp_standard: str = "c++17"
     main_code: str | None = None
     local_path: str | None = None
 
@@ -119,7 +119,7 @@ class RunProjectRequest(BaseModel):
 
 def _proj_meta(s: Snippet) -> dict:
     return {
-        "id": s.id, "title": s.title, "cpp_standard": s.cpp_standard or "c++23",
+        "id": s.id, "title": s.title, "cpp_standard": s.cpp_standard or "c++17",
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
         "deleted_at": s.deleted_at.isoformat() if s.deleted_at else None,
@@ -327,7 +327,7 @@ async def run_project(pid: str, body: RunProjectRequest, db: AsyncSession = Depe
     files = storage.collect_source_files(pid, local_path=s.local_path)
     if not files:
         return {"ok": False, "stage": "compile", "compile_output": "No source files found.", "run_output": ""}
-    return await compile_and_run_files(files, body.stdin, std=s.cpp_standard or "c++23")
+    return await compile_and_run_files(files, body.stdin, std=s.cpp_standard or "c++17")
 
 
 @app.post("/api/projects/{pid}/check")
@@ -336,7 +336,7 @@ async def check_project(pid: str, db: AsyncSession = Depends(get_db)):
     files = storage.collect_source_files(pid, local_path=s.local_path)
     if not files:
         return {"diagnostics": []}
-    return {"diagnostics": await check_syntax(files, std=s.cpp_standard or "c++23")}
+    return {"diagnostics": await check_syntax(files, std=s.cpp_standard or "c++17")}
 
 
 # ── Admin: Classes / Students / Assignments ──────────────────────────────
@@ -624,7 +624,7 @@ async def open_workspace(req: WorkspaceOpen, db: AsyncSession = Depends(get_db))
         existing = (await db.execute(select(Snippet).where(Snippet.local_path == sub["path"]))).scalar_one_or_none()
         p = existing
         if p is None:
-            p = Snippet(title=sub["name"], local_path=sub["path"], cpp_standard="c++23")
+            p = Snippet(title=sub["name"], local_path=sub["path"], cpp_standard="c++17")
             db.add(p)
             await db.flush()
         if assignment is not None:

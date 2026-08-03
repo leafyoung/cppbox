@@ -49,7 +49,7 @@ class RunResult:
         self.timed_out = timed_out
 
 
-async def compile_files(files: list[dict], std: str = "c++23") -> CompileResult:
+async def compile_files(files: list[dict], std: str = "c++17") -> CompileResult:
     """Compile multiple files together. Each file: {name, content}."""
     job_id = uuid.uuid4().hex[:12]
     job_dir = Path(WORKDIR) / job_id
@@ -152,7 +152,7 @@ async def run_binary(binary_path: str, stdin: str = "", timeout: int = 15) -> Ru
         return RunResult(output=f"Execution error: {e}", exit_code=-1)
 
 
-async def compile_and_run_files(files: list[dict], stdin: str = "", std: str = "c++23") -> dict:
+async def compile_and_run_files(files: list[dict], stdin: str = "", std: str = "c++17") -> dict:
     """Compile multiple files then run."""
     compile_result = await compile_files(files, std=std)
 
@@ -204,7 +204,7 @@ async def format_code(code: str, style: str = "LLVM") -> str:
 _DIAG_RE = re.compile(r"^(?P<file>[^:]+):(?P<line>\d+):(?P<col>\d+):\s*(?P<sev>error|warning|note|fatal error):\s*(?P<msg>.*)$")
 
 
-async def check_syntax(files: list[dict], std: str = "c++23", entry: str | None = None) -> list[dict]:
+async def check_syntax(files: list[dict], std: str = "c++17", entry: str | None = None) -> list[dict]:
     """Parse-only check on the HOST (no Docker): fast, never executes code.
     Returns [{file, line, col, severity, message}]."""
     job_id = uuid.uuid4().hex[:12]

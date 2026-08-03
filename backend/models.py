@@ -26,7 +26,7 @@ class Snippet(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     version = Column(Integer, default=1)
-    cpp_standard = Column(String(10), default="c++23")
+    cpp_standard = Column(String(10), default="c++17")
     deleted_at = Column(DateTime(timezone=True), nullable=True)  # set => in trash
 
 

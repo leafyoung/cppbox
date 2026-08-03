@@ -26,7 +26,7 @@ pub async fn ws_handler(
     Query(q): Query<DebugQuery>,
     State(st): State<AppState>,
 ) -> impl IntoResponse {
-    let std = q.std.unwrap_or_else(|| "c++23".into());
+    let std = q.std.unwrap_or_else(|| "c++17".into());
     wsu.on_upgrade(move |socket| run_session(socket, st, q.pid, std))
 }
 

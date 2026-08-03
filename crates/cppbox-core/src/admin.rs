@@ -351,7 +351,7 @@ async fn open_workspace(State(st): State<AppState>, Json(req): Json<WorkspaceOpe
             None => {
                 let id = uuid();
                 let now = now();
-                sqlx::query("INSERT INTO snippets(id,title,local_path,code,language,created_at,updated_at,version,cpp_standard,deleted_at) VALUES (?,?,?,NULL,'cpp',?,?,1,'c++23',NULL)")
+                sqlx::query("INSERT INTO snippets(id,title,local_path,code,language,created_at,updated_at,version,cpp_standard,deleted_at) VALUES (?,?,?,NULL,'cpp',?,?,1,'c++17',NULL)")
                     .bind(&id).bind(name).bind(path).bind(&now).bind(&now).execute(&mut *tx).await.map_err(db_err)?;
                 (id, Some(now.clone()), Some(now))
             }
@@ -374,7 +374,7 @@ async fn open_workspace(State(st): State<AppState>, Json(req): Json<WorkspaceOpe
                 }
             }
         }
-        projects.push(json!({ "id": pid, "title": name, "cpp_standard": "c++23",
+        projects.push(json!({ "id": pid, "title": name, "cpp_standard": "c++17",
                               "created_at": created_at, "updated_at": updated_at,
                               "deleted_at": Value::Null, "local_path": path }));
     }

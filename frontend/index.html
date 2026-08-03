@@ -166,7 +166,8 @@ button { font-family:inherit; }
 .mini:hover { border-color:var(--accent); color:var(--accent); }
 .hint { font-size:11px; color:var(--dim); }
 /* debugger */
-.cm-debug-bp { width:12px; height:12px; margin:7px 4px; border-radius:50%; background:var(--red); display:inline-block; }
+.CodeMirror-gutter-breakpoints { min-width:16px; }
+.cm-debug-bp { width:12px; height:12px; margin:7px 2px; border-radius:50%; background:var(--red); display:inline-block; }
 .cm-debug-current { background:rgba(137,180,250,.25); }
 .debug-toolbar { display:none; align-items:center; gap:6px; padding:6px 12px; border-top:1px solid var(--border); background:var(--surface); flex-wrap:wrap; }
 .debug-toolbar .btn { padding:4px 10px; font-size:12px; }
@@ -242,7 +243,7 @@ button { font-family:inherit; }
       <select id="stdSelect" onchange="onStdChange()">
         <option value="c++17">C++17</option>
         <option value="c++20">C++20</option>
-        <option value="c++23" selected>C++23</option>
+        <option value="c++17" selected>C++23</option>
       </select>
       <select id="themeSelect" onchange="onThemeChange()" title="Color scheme"></select>
       <button class="btn btn-warn" id="formatBtn" onclick="formatCode()">🎨 Format</button>
@@ -428,8 +429,8 @@ let hoverTimer=null;
 let expandedDirs=new Set();
 let lspDiags={};
 let editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
-  mode: cppMode('c++23'), theme:'material-ocean', lineNumbers:true, indentUnit:2, tabSize:2, autofocus:true,
-  gutters:['CodeMirror-lint-markers','breakpoints'], hintOptions:{hint:clangHint, completeSingle:false},
+  mode: cppMode('c++17'), theme:'material-ocean', lineNumbers:true, indentUnit:2, tabSize:2, autofocus:true,
+  gutters:['breakpoints','CodeMirror-lint-markers'], hintOptions:{hint:clangHint, completeSingle:false},
   lint:{ async:true, getAnnotations:lintGetAnnotations },
   extraKeys:{ 'Ctrl-Enter':runCode,'Cmd-Enter':runCode,'Ctrl-S':saveActiveFile,'Cmd-S':saveActiveFile,
     'Ctrl-F':saveAndFormat,'Cmd-F':saveAndFormat,'Ctrl-Space':'autocomplete','Shift-Space':'autocomplete','F5':debugToggle },

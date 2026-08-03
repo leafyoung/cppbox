@@ -95,7 +95,7 @@ pub struct ProjectCreate {
     pub local_path: Option<String>,
 }
 fn default_title() -> String { "Untitled".into() }
-fn default_std() -> String { "c++23".into() }
+fn default_std() -> String { "c++17".into() }
 
 #[derive(Deserialize)]
 pub struct ProjectUpdate {
@@ -133,7 +133,7 @@ fn proj_meta(s: &Snippet) -> Value {
     json!({
         "id": s.id,
         "title": s.title.clone().unwrap_or_else(|| "Untitled".into()),
-        "cpp_standard": s.cpp_standard.clone().unwrap_or_else(|| "c++23".into()),
+        "cpp_standard": s.cpp_standard.clone().unwrap_or_else(|| "c++17".into()),
         "created_at": s.created_at,
         "updated_at": s.updated_at,
         "deleted_at": s.deleted_at,
@@ -189,7 +189,7 @@ async fn create_project(
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_iso();
     let title = if req.title.trim().is_empty() { "Untitled".to_string() } else { req.title };
-    let std = if req.cpp_standard.trim().is_empty() { "c++23".to_string() } else { req.cpp_standard };
+    let std = if req.cpp_standard.trim().is_empty() { "c++17".to_string() } else { req.cpp_standard };
 
     sqlx::query(
         "INSERT INTO snippets (id, title, local_path, code, language, created_at, updated_at, version, cpp_standard, deleted_at)
@@ -235,7 +235,7 @@ async fn update_project(
     let s = fetch_one(&st.db, &pid).await?;
     let title = req.title.unwrap_or(s.title.unwrap_or_else(|| "Untitled".into()));
     let std_changed = req.cpp_standard.is_some();
-    let cpp_standard = req.cpp_standard.unwrap_or(s.cpp_standard.unwrap_or_else(|| "c++23".into()));
+    let cpp_standard = req.cpp_standard.unwrap_or(s.cpp_standard.unwrap_or_else(|| "c++17".into()));
     let local_path = req.local_path.or(s.local_path);
     let now = now_iso();
     sqlx::query("UPDATE snippets SET title = ?, cpp_standard = ?, local_path = ?, updated_at = ? WHERE id = ?")
@@ -406,7 +406,7 @@ async fn run_project(
         return Ok(Json(json!({ "ok": false, "stage": "compile", "compile_output": "No source files found.", "run_output": "" })));
     }
     let files: Vec<_> = src.into_iter().map(|(n, c)| sandbox::File { name: n, content: c }).collect();
-    let std = s.cpp_standard.unwrap_or_else(|| "c++23".into());
+    let std = s.cpp_standard.unwrap_or_else(|| "c++17".into());
     Ok(Json(sandbox::compile_and_run(&st.root, &files, &req.stdin, &std).await))
 }
 
@@ -420,7 +420,7 @@ async fn check_project(
         return Ok(Json(json!({ "diagnostics": [] })));
     }
     let files: Vec<_> = src.into_iter().map(|(n, c)| sandbox::File { name: n, content: c }).collect();
-    let std = s.cpp_standard.unwrap_or_else(|| "c++23".into());
+    let std = s.cpp_standard.unwrap_or_else(|| "c++17".into());
     let diags = sandbox::check_syntax(&st.root, &files, &std, None).await;
     Ok(Json(json!({ "diagnostics": diags })))
 }
