@@ -5,6 +5,8 @@
 ```bash
   cd /var/home/yangye/devv/fin/classroom
   cargo run -p cppbox-core --bin cppbox-server
+
+  CPPBOX_NO_OPEN=1 cargo run -p cppbox-core --bin cppbox-server
 ```
 
 It prints CPPBOX_PORT=<n>; open http://127.0.0.1:<n> in a browser.

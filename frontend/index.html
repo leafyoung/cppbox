@@ -241,9 +241,9 @@ button { font-family:inherit; }
     <div class="toolbar">
       <input type="text" id="titleInput" placeholder="Project name..." value="Untitled">
       <select id="stdSelect" onchange="onStdChange()">
-        <option value="c++17">C++17</option>
+        <option value="c++17" selected>C++17</option>
         <option value="c++20">C++20</option>
-        <option value="c++17" selected>C++23</option>
+        <option value="c++23">C++23</option>
       </select>
       <select id="themeSelect" onchange="onThemeChange()" title="Color scheme"></select>
       <button class="btn btn-warn" id="formatBtn" onclick="formatCode()">🎨 Format</button>
@@ -672,7 +672,9 @@ function buildThemeSelect(){
   const lg=Object.assign(document.createElement('optgroup'),{label:'Light'});
   for(const[k,v]of Object.entries(THEMES)){ const o=new Option(k,k); (v.kind==='dark'?og:lg).appendChild(o); }
   sel.appendChild(og); sel.appendChild(lg);
-  sel.value=localStorage.getItem('cppbox_theme')||'material-ocean';
+  let saved='material-ocean';
+  try{ saved=localStorage.getItem('cppbox_theme')||'material-ocean'; }catch(e){}
+  sel.value=THEMES[saved]?saved:'material-ocean';
   applyTheme(sel.value);
 }
 function applyTheme(id){
@@ -681,7 +683,7 @@ function applyTheme(id){
   for(const[k,v]of Object.entries(t.vars)) r.setProperty(k,v);
   editor.setOption('theme', t.cm);
 }
-function onThemeChange(){ const id=document.getElementById('themeSelect').value; applyTheme(id); localStorage.setItem('cppbox_theme',id); }
+function onThemeChange(){ const id=document.getElementById('themeSelect').value; applyTheme(id); try{ localStorage.setItem('cppbox_theme',id); }catch(e){} }
 
 // ── Run ──────────────────────────────────────────────────────────────────
 async function runCode(){
