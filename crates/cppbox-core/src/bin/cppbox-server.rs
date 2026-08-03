@@ -22,13 +22,33 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
+    let url = format!("http://127.0.0.1:{port}");
     println!("CPPBOX_PORT={}", port);
     println!("CPPBOX_ROOT={}", root.display());
+    println!("→ {url}  (Ctrl+click to open)");
+    // auto-open the browser unless disabled (useful for standalone dev runs)
+    if std::env::var("CPPBOX_NO_OPEN").is_err() {
+        let url2 = url.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+            open_browser(&url2);
+        });
+    }
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
+}
+
+/// Open the URL in the platform default browser (best-effort, fire-and-forget).
+fn open_browser(url: &str) {
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
 }
 
 async fn shutdown_signal() {
