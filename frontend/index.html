@@ -1194,7 +1194,7 @@ function timeAgo(iso){if(!iso)return'';const ms=Date.now()-new Date(iso).getTime
 let debugWs=null, debugState='idle';        // idle|starting|running|stopped
 let debugBps={};                            // file -> Set of 1-based lines
 let debugLineMarker=null;
-CodeMirror.defineGutter('breakpoints');
+// 'breakpoints' gutter is enabled via the editor `gutters` option; no define needed (CM5)
 function dbgFile(){ return (activeIdx>=0&&openTabs[activeIdx])?openTabs[activeIdx].path:null; }
 function mkBpMarker(){ const d=document.createElement('div'); d.className='cm-debug-bp'; d.title='Breakpoint'; return d; }
 function toggleBreakpoint(line){
