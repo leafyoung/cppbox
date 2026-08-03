@@ -46,6 +46,7 @@ enum Cmd {
     StepIn,
     StepOut,
     Pause,
+    Expand { #[serde(rename = "ref")] vref: u64 },
     Stop,
 }
 
@@ -137,6 +138,17 @@ async fn run_session(socket: WebSocket, st: AppState, pid: String, std: String) 
                     Cmd::StepIn   => { let _ = step_cmd(&mut stdin, &pending, &seq, "stepIn", thread_id).await; }
                     Cmd::StepOut  => { let _ = step_cmd(&mut stdin, &pending, &seq, "stepOut", thread_id).await; }
                     Cmd::Pause    => { let _ = step_cmd(&mut stdin, &pending, &seq, "pause", thread_id).await; }
+                    Cmd::Expand { vref } => {
+                        if let Ok(r) = send_request(&mut stdin, &pending, &seq, "variables", Some(json!({"variablesReference": vref}))).await {
+                            let raw = r.get("body").and_then(|b| b.get("variables")).and_then(|b| b.as_array()).cloned().unwrap_or_default();
+                            let vars: Vec<Value> = raw.iter().map(|v| json!({
+                                "name": v.get("name").cloned().unwrap_or(Value::Null),
+                                "value": v.get("value").cloned().unwrap_or(Value::Null),
+                                "ref": v.get("variablesReference").and_then(|r| r.as_u64()).unwrap_or(0),
+                            })).collect();
+                            let _ = ws_sender.send(to_msg(json!({"type":"vars","ref":vref,"vars":vars}))).await;
+                        }
+                    }
                     Cmd::Stop => {
                         let _ = send_request(&mut stdin, &pending, &seq, "disconnect", Some(json!({"terminateDebuggee": true}))).await;
                         let _ = ws_sender.send(to_msg(json!({"type":"ended"}))).await;
@@ -162,17 +174,50 @@ async fn run_session(socket: WebSocket, st: AppState, pid: String, std: String) 
                         let tid = body.get("threadId").and_then(|t| t.as_u64());
                         thread_id = tid;
                         let reason = body.get("reason").and_then(|r| r.as_str()).unwrap_or("").to_string();
-                        let (file, line, func) = if let Some(t) = tid {
-                            top_frame(&mut stdin, &pending, &seq, t).await.unwrap_or((None, None, None))
-                        } else { (None, None, None) };
+                        let mut file: Option<String> = None;
+                        let mut line: Option<u64> = None;
+                        let mut func: Option<String> = None;
+                        let mut frames: Vec<Value> = Vec::new();
+                        let mut vars: Vec<Value> = Vec::new();
+                        if let Some(t) = tid {
+                            if let Ok(r) = send_request(&mut stdin, &pending, &seq, "stackTrace", Some(json!({
+                                "threadId": t, "startFrame": 0, "levels": 20,
+                            }))).await {
+                                let arr = r.get("body").and_then(|b| b.get("stackFrames")).and_then(|b| b.as_array()).cloned().unwrap_or_default();
+                                for f in &arr {
+                                    let path = f.get("source").and_then(|s| s.get("path")).and_then(|p| p.as_str()).map(str::to_string);
+                                    frames.push(json!({
+                                        "id": f.get("id").cloned().unwrap_or(Value::Null),
+                                        "name": f.get("name").and_then(|n| n.as_str()).unwrap_or(""),
+                                        "file": path.as_deref().map(norm_path),
+                                        "line": f.get("line").cloned().unwrap_or(Value::Null),
+                                    }));
+                                }
+                                if let Some(top) = arr.first() {
+                                    let path = top.get("source").and_then(|s| s.get("path")).and_then(|p| p.as_str()).map(str::to_string);
+                                    file = path.as_deref().map(norm_path);
+                                    line = top.get("line").and_then(|l| l.as_u64());
+                                    func = top.get("name").and_then(|n| n.as_str()).map(str::to_string);
+                                    if let Some(frid) = top.get("id").and_then(|i| i.as_u64()) {
+                                        vars = fetch_vars(&mut stdin, &pending, &seq, frid).await.unwrap_or_default();
+                                    }
+                                }
+                            }
+                        }
                         let _ = ws_sender.send(to_msg(json!({
                             "type":"stopped","file":file,"line":line,"func":func,"reason":reason,"threadId":tid
                         }))).await;
+                        let _ = ws_sender.send(to_msg(json!({"type":"debug_info","frames":frames,"vars":vars}))).await;
                     }
                     "output" => {
-                        let text = body.get("output").and_then(|o| o.as_str()).unwrap_or("");
-                        if !text.is_empty() {
-                            let _ = ws_sender.send(to_msg(json!({"type":"output","text":text}))).await;
+                        // only the inferior's own stdout/stderr; skip lldb-dap's
+                        // internal console noise (e.g. its Python tracebacks)
+                        let cat = body.get("category").and_then(|c| c.as_str()).unwrap_or("");
+                        if cat == "stdout" || cat == "stderr" {
+                            let text = body.get("output").and_then(|o| o.as_str()).unwrap_or("");
+                            if !text.is_empty() {
+                                let _ = ws_sender.send(to_msg(json!({"type":"output","text":text}))).await;
+                            }
                         }
                     }
                     "terminated" | "exited" => {
@@ -245,14 +290,35 @@ async fn step_cmd(stdin: &mut ChildStdin, pending: &Pending, seq: &AtomicU64, cm
     Ok(())
 }
 
-async fn top_frame(stdin: &mut ChildStdin, pending: &Pending, seq: &AtomicU64, thread_id: u64) -> Option<(Option<String>, Option<u64>, Option<String>)> {
-    let r = send_request(stdin, pending, seq, "stackTrace", Some(json!({"threadId": thread_id, "startFrame": 0, "levels": 1}))).await.ok()?;
-    let frame = r.get("body").and_then(|b| b.get("stackFrames")).and_then(|f| f.as_array()).and_then(|a| a.first())?;
-    let path = frame.get("source").and_then(|s| s.get("path")).and_then(|p| p.as_str()).map(str::to_string);
-    let line = frame.get("line").and_then(|l| l.as_u64());
-    let func = frame.get("name").and_then(|n| n.as_str()).map(str::to_string);
-    let file = path.map(|p| p.strip_prefix("/home/sandbox/work/").map(str::to_string).unwrap_or(p));
-    Some((file, line, func))
+/// Strip the in-container workdir prefix from a DAP source path.
+fn norm_path(p: &str) -> String {
+    p.strip_prefix("/home/sandbox/work/").map(str::to_string).unwrap_or_else(|| p.to_string())
+}
+
+/// Fetch locals/args for a frame (all scopes' variables, one level deep).
+async fn fetch_vars(stdin: &mut ChildStdin, pending: &Pending, seq: &AtomicU64, frame_id: u64) -> Option<Vec<Value>> {
+    let r = send_request(stdin, pending, seq, "scopes", Some(json!({"frameId": frame_id}))).await.ok()?;
+    let scopes = r.get("body").and_then(|b| b.get("scopes")).and_then(|b| b.as_array()).cloned().unwrap_or_default();
+    let mut vars: Vec<Value> = Vec::new();
+    for sc in &scopes {
+        // keep only the meaningful locals/args scopes; drop registers etc.
+        let sname = sc.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        if sname != "Locals" && sname != "Arguments" {
+            continue;
+        }
+        let vr = sc.get("variablesReference").and_then(|r| r.as_u64()).unwrap_or(0);
+        if vr == 0 { continue; }
+        let Ok(r2) = send_request(stdin, pending, seq, "variables", Some(json!({"variablesReference": vr}))).await else { continue };
+        let raw = r2.get("body").and_then(|b| b.get("variables")).and_then(|b| b.as_array()).cloned().unwrap_or_default();
+        for v in &raw {
+            vars.push(json!({
+                "name": v.get("name").cloned().unwrap_or(Value::Null),
+                "value": v.get("value").cloned().unwrap_or(Value::Null),
+                "ref": v.get("variablesReference").and_then(|r| r.as_u64()).unwrap_or(0),
+            }));
+        }
+    }
+    Some(vars)
 }
 
 /// Read DAP messages (Content-Length framed) forever: responses resolve pending

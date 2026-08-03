@@ -173,6 +173,20 @@ button { font-family:inherit; }
 .debug-toolbar .btn:disabled { opacity:.4; cursor:default; }
 .debug-status { font-size:11px; color:var(--dim); margin-left:auto; font-family:'JetBrains Mono',monospace; }
 .debug-output { display:none; min-height:70px; max-height:150px; overflow:auto; white-space:pre-wrap; font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--text); background:var(--surface2); padding:8px 10px; border:1px solid var(--border); border-radius:4px; margin:0 12px 10px; }
+/* debug info panel (right side) */
+.dbg-panel { border-bottom:1px solid var(--border); padding:8px 10px; background:var(--surface); }
+.dbg-label { font-size:11px; font-weight:600; color:var(--dim); margin:8px 0 4px; text-transform:uppercase; letter-spacing:.04em; }
+.dbg-box { max-height:140px; overflow:auto; font-family:'JetBrains Mono',monospace; font-size:11px; }
+.dbg-frame { padding:3px 6px; border-radius:3px; cursor:pointer; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dbg-frame:hover { background:var(--surface2); color:var(--accent); }
+.dbg-frame:first-child { color:var(--accent); font-weight:600; }
+.dbg-var { padding:2px 6px; display:flex; gap:8px; cursor:default; }
+.dbg-var.expandable { cursor:pointer; }
+.dbg-var.expandable::before { content:'▸'; color:var(--dim); margin-right:2px; }
+.dbg-var.expandable.open::before { content:'▾'; }
+.dbg-vname { color:var(--yellow); }
+.dbg-vval { color:var(--text); white-space:pre-wrap; word-break:break-all; }
+.dbg-vkids { padding-left:14px; }
 .asg-card { border:1px solid var(--border); border-radius:5px; padding:10px 12px; margin-bottom:9px; background:var(--surface); }
 .asg-card .top { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
 .asg-card .nm { font-size:13px; font-weight:600; color:var(--text); }
@@ -253,7 +267,7 @@ button { font-family:inherit; }
       <div class="stdin-wrap"><label>stdin:</label><input type="text" id="stdinInput" placeholder="Input for program (optional)"></div>
     </div>
     <div class="debug-toolbar" id="debugToolbar">
-      <button class="btn btn-green" onclick="debugStart()" title="Start / restart debug (F5)">▶ Start</button>
+      <button class="btn btn-green" id="dbgStart" onclick="debugStart()" title="Start / restart debug (F5)">▶ Start</button>
       <button class="btn" id="dbgContinue" onclick="debugCmd('Continue')" title="Continue (resume)">⏯ Continue</button>
       <button class="btn" id="dbgNext" onclick="debugCmd('Next')" title="Step over">⤓ Next</button>
       <button class="btn" id="dbgStepIn" onclick="debugCmd('StepIn')" title="Step into">↧ Step In</button>
@@ -265,6 +279,12 @@ button { font-family:inherit; }
   </div>
 
   <div class="tree-panel" id="treePanel">
+    <div class="dbg-panel" id="dbgPanel" style="display:none">
+      <div class="dbg-label">Call Stack</div>
+      <div class="dbg-box" id="dbgStack"></div>
+      <div class="dbg-label">Variables</div>
+      <div class="dbg-box" id="dbgVars"></div>
+    </div>
     <div class="tree-head">
       <span id="treeTitle">Files</span>
       <div style="display:flex; gap:6px;">
@@ -1194,8 +1214,15 @@ function updateDebugUi(){
   const active=debugState!=='idle';
   t.style.display=active?'flex':'none';
   document.getElementById('dbgBtn').textContent=active?'⏹ Stop Debug':'🐞 Debug';
+  const p=document.getElementById('dbgPanel'); if(p) p.style.display=active?'block':'none';
   const st=document.getElementById('debugStatus');
   if(st) st.textContent=active?(debugState==='starting'?'compiling…':debugState==='stopped'?'paused':'running'):'';
+  // disable-when-inactive
+  const set=(id,en)=>{ const b=document.getElementById(id); if(b) b.disabled=!en; };
+  set('dbgStart', debugState==='idle');
+  const paused=debugState==='stopped';
+  set('dbgContinue',paused); set('dbgNext',paused); set('dbgStepIn',paused); set('dbgStepOut',paused);
+  set('dbgStop', active);
 }
 function debugToggle(){ if(debugState==='idle') debugStart(); else debugCmd('Stop'); }
 async function debugStart(){
@@ -1217,13 +1244,15 @@ function debugOnMsg(m){
     case 'status': setDebugStatus(m.text); break;
     case 'error': setDebugStatus('⚠ '+m.msg); debugState='idle'; updateDebugUi(); break;
     case 'breakpoints': applyBpVerification(m.file,m.results); break;
-    case 'running': debugState='running'; setDebugLine(null); updateDebugUi(); break;
+    case 'running': debugState='running'; setDebugLine(null); clearDebugInfo(); updateDebugUi(); break;
     case 'stopped': debugState='stopped'; updateDebugUi();
       if(m.file){ openDebugFile(m.file,m.line); } else setDebugLine(null);
       break;
+    case 'debug_info': renderStack(m.frames||[]); renderVars(m.vars||[],document.getElementById('dbgVars')); break;
+    case 'vars': { const el=dbgVarExpand[m.ref]; if(el){ renderVars(m.vars||[],el); } break; }
     case 'output': debugOutput(m.text); break;
-    case 'exited': debugOutput('\n[exited code '+(m.code!=null?m.code:'?')+']\n'); setDebugLine(null); break;
-    case 'ended': debugState='idle'; setDebugLine(null); updateDebugUi(); break;
+    case 'exited': debugOutput('\n[exited code '+(m.code!=null?m.code:'?')+']\n'); setDebugLine(null); clearDebugInfo(); break;
+    case 'ended': debugState='idle'; setDebugLine(null); clearDebugInfo(); updateDebugUi(); break;
   }
 }
 function applyBpVerification(file,results){
@@ -1256,6 +1285,41 @@ function debugCmd(cmd){
 function debugOutput(t){ const el=document.getElementById('debugOutput'); el.style.display='block'; el.textContent+=t; el.scrollTop=el.scrollHeight; }
 function debugOutputClear(){ const el=document.getElementById('debugOutput'); el.textContent=''; el.style.display='none'; }
 function setDebugStatus(s){ const el=document.getElementById('debugStatus'); if(el) el.textContent=s; }
+// ── debug info: call stack + variables ──────────────────────────────────
+let dbgVarExpand={};   // variablesReference -> container element
+function clearDebugInfo(){ const s=document.getElementById('dbgStack'), v=document.getElementById('dbgVars'); if(s)s.innerHTML=''; if(v)v.innerHTML=''; dbgVarExpand={}; }
+function renderStack(frames){
+  const el=document.getElementById('dbgStack'); if(!el) return;
+  el.innerHTML='';
+  for(const f of frames){
+    const row=document.createElement('div'); row.className='dbg-frame';
+    row.textContent=`${f.name||'?'} — ${f.file||'?'}:${f.line!=null?f.line:'?'}`;
+    row.onclick=()=>{ if(f.file) openDebugFile(f.file,f.line); };
+    el.appendChild(row);
+  }
+}
+function renderVars(vars,container){
+  if(!container) return;
+  container.innerHTML='';
+  for(const v of vars) appendVar(v,container);
+}
+function appendVar(v,container){
+  const row=document.createElement('div'); row.className='dbg-var';
+  const name=document.createElement('span'); name.className='dbg-vname'; name.textContent=(v.name!=null?v.name:'?');
+  const val=document.createElement('span'); val.className='dbg-vval'; val.textContent=(v.value!=null?v.value:'');
+  row.appendChild(name); row.appendChild(val); container.appendChild(row);
+  if(v.ref>0){
+    const kids=document.createElement('div'); kids.className='dbg-vkids'; kids.style.display='none';
+    row.classList.add('expandable');
+    row.onclick=()=>{
+      const open=kids.style.display!=='none';
+      kids.style.display=open?'none':'block';
+      row.classList.toggle('open',!open);
+      if(!open){ dbgVarExpand[v.ref]=kids; sendDebug({cmd:'Expand',ref:v.ref}); }
+    };
+    container.appendChild(kids);
+  }
+}
 
 // ── Editor events ────────────────────────────────────────────────────────
 editor.on('change',()=>{ if(activeIdx>=0&&openTabs[activeIdx]){ openTabs[activeIdx].dirty=true; openTabs[activeIdx].content=editor.getValue(); renderTabs(); scheduleAutoSave(); } lspDidChange(); });
