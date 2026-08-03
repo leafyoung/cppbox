@@ -13,6 +13,7 @@ RUN apk add --no-cache \
     musl-dev \
     libc++-dev \
     coreutils \
+    lldb \
     && rm -rf /var/cache/apk/*
 
 # Create a restricted user for execution

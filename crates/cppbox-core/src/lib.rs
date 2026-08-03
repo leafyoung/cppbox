@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod db;
+pub mod debug;
 pub mod lsp;
 pub mod remote;
 pub mod routes;

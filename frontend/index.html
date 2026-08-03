@@ -165,6 +165,14 @@ button { font-family:inherit; }
 .mini { background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:3px 9px; border-radius:4px; font-size:11px; cursor:pointer; text-decoration:none; display:inline-block; }
 .mini:hover { border-color:var(--accent); color:var(--accent); }
 .hint { font-size:11px; color:var(--dim); }
+/* debugger */
+.cm-debug-bp { width:12px; height:12px; margin:7px 4px; border-radius:50%; background:var(--red); display:inline-block; }
+.cm-debug-current { background:rgba(137,180,250,.25); }
+.debug-toolbar { display:none; align-items:center; gap:6px; padding:6px 12px; border-top:1px solid var(--border); background:var(--surface); flex-wrap:wrap; }
+.debug-toolbar .btn { padding:4px 10px; font-size:12px; }
+.debug-toolbar .btn:disabled { opacity:.4; cursor:default; }
+.debug-status { font-size:11px; color:var(--dim); margin-left:auto; font-family:'JetBrains Mono',monospace; }
+.debug-output { display:none; min-height:70px; max-height:150px; overflow:auto; white-space:pre-wrap; font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--text); background:var(--surface2); padding:8px 10px; border:1px solid var(--border); border-radius:4px; margin:0 12px 10px; }
 .asg-card { border:1px solid var(--border); border-radius:5px; padding:10px 12px; margin-bottom:9px; background:var(--surface); }
 .asg-card .top { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
 .asg-card .nm { font-size:13px; font-weight:600; color:var(--text); }
@@ -230,6 +238,7 @@ button { font-family:inherit; }
       <button class="btn btn-ghost" onclick="showAdmin()">🎓 Admin</button>
       <button class="btn btn-primary" onclick="showSubmit()">📤 Submit</button>
       <button class="btn btn-ghost" onclick="showVscode()">🔗 VS Code</button>
+      <button class="btn" id="dbgBtn" onclick="debugToggle()" title="Debug with lldb (F5)">🐞 Debug</button>
       <button class="btn btn-green" id="runBtn" onclick="runCode()">▶ Run</button>
     </div>
     <div class="tabs" id="tabs"></div>
@@ -243,6 +252,16 @@ button { font-family:inherit; }
       <div class="out-content" id="outputContent"><span style="color:var(--dim)">Click ▶ Run to compile & execute.</span></div>
       <div class="stdin-wrap"><label>stdin:</label><input type="text" id="stdinInput" placeholder="Input for program (optional)"></div>
     </div>
+    <div class="debug-toolbar" id="debugToolbar">
+      <button class="btn btn-green" onclick="debugStart()" title="Start / restart debug (F5)">▶ Start</button>
+      <button class="btn" id="dbgContinue" onclick="debugCmd('Continue')" title="Continue (resume)">⏯ Continue</button>
+      <button class="btn" id="dbgNext" onclick="debugCmd('Next')" title="Step over">⤓ Next</button>
+      <button class="btn" id="dbgStepIn" onclick="debugCmd('StepIn')" title="Step into">↧ Step In</button>
+      <button class="btn" id="dbgStepOut" onclick="debugCmd('StepOut')" title="Step out">↥ Step Out</button>
+      <button class="btn" id="dbgStop" onclick="debugCmd('Stop')" title="Stop debugging">⏹ Stop</button>
+      <span class="debug-status" id="debugStatus"></span>
+    </div>
+    <div class="debug-output" id="debugOutput"></div>
   </div>
 
   <div class="tree-panel" id="treePanel">
@@ -390,10 +409,10 @@ let expandedDirs=new Set();
 let lspDiags={};
 let editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
   mode: cppMode('c++23'), theme:'material-ocean', lineNumbers:true, indentUnit:2, tabSize:2, autofocus:true,
-  gutters:['CodeMirror-lint-markers'], hintOptions:{hint:clangHint, completeSingle:false},
+  gutters:['CodeMirror-lint-markers','breakpoints'], hintOptions:{hint:clangHint, completeSingle:false},
   lint:{ async:true, getAnnotations:lintGetAnnotations },
   extraKeys:{ 'Ctrl-Enter':runCode,'Cmd-Enter':runCode,'Ctrl-S':saveActiveFile,'Cmd-S':saveActiveFile,
-    'Ctrl-F':saveAndFormat,'Cmd-F':saveAndFormat,'Ctrl-Space':'autocomplete','Shift-Space':'autocomplete' },
+    'Ctrl-F':saveAndFormat,'Cmd-F':saveAndFormat,'Ctrl-Space':'autocomplete','Shift-Space':'autocomplete','F5':debugToggle },
 });
 
 // (state hoisted above editor init)
@@ -437,6 +456,7 @@ async function openProject(id){
   document.getElementById('treeTitle').textContent='Files · '+project.title;
   if(project.local_path) document.getElementById('treeTitle').textContent+=' 📁'+project.local_path;
   openTabs=[]; activeIdx=-1; renderTabs();
+  debugBps={}; setDebugLine(null);
   await loadTree();
   // open main.cpp if present
   const mainPath=findFile(tree,'main.cpp');
@@ -582,6 +602,7 @@ function showTab(i){
   if(i<0||!openTabs[i]){ editor.setValue(''); return; }
   editor.setValue(openTabs[i].content);
   lspDidOpen(); refreshLint(); renderTabs(); renderTree();
+  renderBpGutter();
 }
 function closeTab(i,e){
   e.stopPropagation();
@@ -1145,6 +1166,96 @@ function flashErr(e){ const m=(e&&e.message)?e.message:String(e); setStatus('⚠
 window.addEventListener('unhandledrejection', ev=>{ flashErr(ev.reason); ev.preventDefault(); });
 window.addEventListener('error', ev=>{ if(ev.error)flashErr(ev.error); });
 function timeAgo(iso){if(!iso)return'';const ms=Date.now()-new Date(iso).getTime();const mn=Math.floor(ms/60000);if(mn<1)return'just now';if(mn<60)return mn+'m ago';const h=Math.floor(mn/60);if(h<24)return h+'h ago';return new Date(iso).toLocaleDateString();}
+
+// ── Debugger (lldb-dap via /ws/debug) ───────────────────────────────────
+let debugWs=null, debugState='idle';        // idle|starting|running|stopped
+let debugBps={};                            // file -> Set of 1-based lines
+let debugLineMarker=null;
+CodeMirror.defineGutter('breakpoints');
+function dbgFile(){ return (activeIdx>=0&&openTabs[activeIdx])?openTabs[activeIdx].path:null; }
+function mkBpMarker(){ const d=document.createElement('div'); d.className='cm-debug-bp'; d.title='Breakpoint'; return d; }
+function toggleBreakpoint(line){
+  const f=dbgFile(); if(!f||!project) return;
+  const set=debugBps[f]||(debugBps[f]=new Set());
+  const ln=line+1;
+  if(set.has(ln)){ set.delete(ln); editor.setGutterMarker(line,'breakpoints',null); }
+  else { set.add(ln); editor.setGutterMarker(line,'breakpoints',mkBpMarker()); }
+  if(debugWs&&(debugState==='running'||debugState==='stopped')) sendDebug({cmd:'Bp',file:f,lines:[...set]});
+}
+editor.on('gutterClick',(cm,line,gutter)=>{ if(gutter==='breakpoints') toggleBreakpoint(line); });
+function renderBpGutter(){
+  if(!editor) return;
+  editor.clearGutter('breakpoints');
+  const f=dbgFile(); const set=debugBps[f]; if(!set) return;
+  for(const ln of set) editor.setGutterMarker(ln-1,'breakpoints',mkBpMarker());
+}
+function updateDebugUi(){
+  const t=document.getElementById('debugToolbar'); if(!t) return;
+  const active=debugState!=='idle';
+  t.style.display=active?'flex':'none';
+  document.getElementById('dbgBtn').textContent=active?'⏹ Stop Debug':'🐞 Debug';
+  const st=document.getElementById('debugStatus');
+  if(st) st.textContent=active?(debugState==='starting'?'compiling…':debugState==='stopped'?'paused':'running'):'';
+}
+function debugToggle(){ if(debugState==='idle') debugStart(); else debugCmd('Stop'); }
+async function debugStart(){
+  if(!project){ setStatus('Open a project first'); return; }
+  if(activeIdx>=0&&openTabs[activeIdx]) await saveActiveFile();   // debug compiles from disk
+  debugOutputClear(); setDebugLine(null);
+  const proto=location.protocol==='https:'?'wss':'ws';
+  const std=document.getElementById('stdSelect').value;
+  debugWs=new WebSocket(`${proto}://${location.host}/ws/debug?pid=${project.id}&std=${std}`);
+  debugState='starting'; updateDebugUi();
+  debugWs.onmessage=e=>{ let m; try{m=JSON.parse(e.data);}catch{return;} debugOnMsg(m); };
+  debugWs.onclose=()=>{ if(debugState!=='idle'){ debugState='idle'; setDebugLine(null); updateDebugUi(); } };
+  debugWs.onopen=()=>sendDebug({cmd:'Start',breakpoints:debugBpMap()});
+}
+function sendDebug(o){ if(debugWs&&debugWs.readyState===1) debugWs.send(JSON.stringify(o)); }
+function debugBpMap(){ const o={}; for(const f in debugBps) o[f]=[...debugBps[f]]; return o; }
+function debugOnMsg(m){
+  switch(m.type){
+    case 'status': setDebugStatus(m.text); break;
+    case 'error': setDebugStatus('⚠ '+m.msg); debugState='idle'; updateDebugUi(); break;
+    case 'breakpoints': applyBpVerification(m.file,m.results); break;
+    case 'running': debugState='running'; setDebugLine(null); updateDebugUi(); break;
+    case 'stopped': debugState='stopped'; updateDebugUi();
+      if(m.file){ openDebugFile(m.file,m.line); } else setDebugLine(null);
+      break;
+    case 'output': debugOutput(m.text); break;
+    case 'exited': debugOutput('\n[exited code '+(m.code!=null?m.code:'?')+']\n'); setDebugLine(null); break;
+    case 'ended': debugState='idle'; setDebugLine(null); updateDebugUi(); break;
+  }
+}
+function applyBpVerification(file,results){
+  const set=debugBps[file]; if(!set||!results) return;
+  for(const r of results){
+    if(r.ok===false && r.line!=null){
+      set.delete(r.line);
+      if(file===dbgFile()) editor.setGutterMarker(r.line-1,'breakpoints',null);
+    }
+  }
+}
+async function openDebugFile(file,line){
+  if(!file) return;
+  const idx=openTabs.findIndex(t=>t.path===file);
+  if(idx>=0){ showTab(idx); } else { try{ await openFile(file); }catch{ return; } }
+  renderBpGutter();
+  setDebugLine((line||1)-1);
+}
+function setDebugLine(line0){
+  if(debugLineMarker){ debugLineMarker.clear(); debugLineMarker=null; }
+  if(line0!=null&&line0>=0&&line0<editor.lineCount()){
+    debugLineMarker=editor.markText({line:line0,ch:0},{line:line0,ch:0},{className:'cm-debug-current'});
+    editor.setCursor({line:line0,ch:0});
+  }
+}
+function debugCmd(cmd){
+  if(cmd==='Stop'){ sendDebug({cmd:'Stop'}); debugState='idle'; setDebugLine(null); updateDebugUi(); return; }
+  sendDebug({cmd});
+}
+function debugOutput(t){ const el=document.getElementById('debugOutput'); el.style.display='block'; el.textContent+=t; el.scrollTop=el.scrollHeight; }
+function debugOutputClear(){ const el=document.getElementById('debugOutput'); el.textContent=''; el.style.display='none'; }
+function setDebugStatus(s){ const el=document.getElementById('debugStatus'); if(el) el.textContent=s; }
 
 // ── Editor events ────────────────────────────────────────────────────────
 editor.on('change',()=>{ if(activeIdx>=0&&openTabs[activeIdx]){ openTabs[activeIdx].dirty=true; openTabs[activeIdx].content=editor.getValue(); renderTabs(); scheduleAutoSave(); } lspDidChange(); });

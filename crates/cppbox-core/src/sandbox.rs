@@ -8,12 +8,46 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tokio::process::Command;
 
-fn sandbox_image() -> String {
+pub fn sandbox_image() -> String {
     std::env::var("CPPBOX_SANDBOX_IMAGE").unwrap_or_else(|_| "cpp-sandbox:latest".into())
 }
 
+/// Compile with debug symbols (-g -O0) for gdb. Returns (binary, job_dir).
+pub async fn compile_debug(root: &Path, files: &[File], std: &str) -> Result<(PathBuf, PathBuf), String> {
+    let dir = job_dir(root);
+    write_sources(&dir, files);
+    let sources = source_list(files);
+    let inc = include_flags(files);
+    let cmd_str = format!(
+        "clang++ -g -O0 -fno-omit-frame-pointer -std={std} -Wall -Wextra -fcolor-diagnostics {inc} {src} -o a.out 2>&1",
+        src = sources.join(" ")
+    );
+    let abs = dir.canonicalize().map_err(|e| e.to_string())?;
+    let mut c = Command::new(runtime());
+    c.args(["run", "--rm", "--network", "none", "--memory", "512m", "--cpus", "2",
+            "--pids-limit", "50", "--read-only", "--security-opt", "label=disable"])
+        .arg("-v").arg(format!("{}:/home/sandbox/work:rw", abs.display()))
+        .args(["-w", "/home/sandbox/work"])
+        .arg(sandbox_image())
+        .args(["sh", "-c", &cmd_str])
+        .stdout(Stdio::piped()).stderr(Stdio::piped());
+    let out = match tokio::time::timeout(Duration::from_secs(60), c.output()).await {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => return Err(format!("compile error: {e}")),
+        Err(_) => return Err("Compilation timed out (60s)".into()),
+    };
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    let binary = dir.join("a.out");
+    if out.status.success() && binary.exists() {
+        Ok((binary, dir))
+    } else {
+        Err(if text.trim().is_empty() { "Compilation failed".into() } else { text })
+    }
+}
+
 /// Pick the container CLI once: podman (rootless) preferred, docker fallback.
-fn runtime() -> &'static str {
+pub fn runtime() -> &'static str {
     static RT: OnceLock<&'static str> = OnceLock::new();
     *RT.get_or_init(|| {
         for c in ["podman", "docker"] {

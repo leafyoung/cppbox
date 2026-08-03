@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::db::Snippet;
-use crate::{lsp, sandbox, storage, AppState};
+use crate::{debug, lsp, sandbox, storage, AppState};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -36,6 +36,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/projects/{pid}/run", post(run_project))
         .route("/api/projects/{pid}/check", post(check_project))
         .route("/ws/lsp", get(lsp::ws_handler))
+        .route("/ws/debug", get(debug::ws_handler))
 }
 
 // ── error type ───────────────────────────────────────────────────────────
