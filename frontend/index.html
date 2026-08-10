@@ -81,7 +81,7 @@ button { font-family:inherit; }
 .tab .x:hover { opacity:1; color:var(--red); }
 
 .editor-wrap { flex:1; min-height:0; position:relative; }
-.CodeMirror { height:100% !important; font-size:14px; line-height:1.6; }
+.CodeMirror { height:100% !important; font-size:var(--editor-font,14px); line-height:1.6; }
 
 /* Output */
 .output-panel { height:170px; background:var(--surface); border-top:1px solid var(--border); display:flex; flex-direction:column; }
@@ -246,6 +246,7 @@ button { font-family:inherit; }
         <option value="c++23">C++23</option>
       </select>
       <select id="themeSelect" onchange="onThemeChange()" title="Color scheme"></select>
+      <select id="fontSelect" onchange="onFontChange()" title="Font size"></select>
       <button class="btn btn-warn" id="formatBtn" onclick="formatCode()">🎨 Format</button>
       <button class="btn btn-ghost" onclick="saveActiveFile()">💾 Save</button>
       <span class="status" id="statusText"></span>
@@ -683,6 +684,20 @@ function applyTheme(id){
   for(const[k,v]of Object.entries(t.vars)) r.setProperty(k,v);
   editor.setOption('theme', t.cm);
 }
+
+// ── Font size ────────────────────────────────────────────────────────────
+const FONT_SIZES=[11,12,13,14,15,16,18,20];
+function buildFontSelect(){
+  const sel=document.getElementById('fontSelect');
+  for(const s of FONT_SIZES){ sel.appendChild(new Option(s+'px', s)); }
+  let saved=14;
+  try{ saved=parseInt(localStorage.getItem('cppbox_font'))||14; }catch(e){}
+  if(!FONT_SIZES.includes(saved)) saved=14;
+  sel.value=saved;
+  applyFontSize(saved);
+}
+function applyFontSize(n){ document.documentElement.style.setProperty('--editor-font', n+'px'); editor.refresh(); }
+function onFontChange(){ const n=parseInt(document.getElementById('fontSelect').value)||14; applyFontSize(n); try{ localStorage.setItem('cppbox_font',n); }catch(e){} }
 function onThemeChange(){ const id=document.getElementById('themeSelect').value; applyTheme(id); try{ localStorage.setItem('cppbox_theme',id); }catch(e){} }
 
 // ── Run ──────────────────────────────────────────────────────────────────
@@ -1332,6 +1347,7 @@ window.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='f')e.
 
 // ── Init ─────────────────────────────────────────────────────────────────
 buildThemeSelect();
+buildFontSelect();
 lspConnect();
 loadProjects().catch(e=>flashErr(new Error('Backend unreachable or stale (no /api/projects). Restart uvicorn to load new backend: '+e.message)));
 loadTrash().catch(()=>{});
