@@ -678,14 +678,15 @@ async function saveActiveFile(){
   if(activeIdx<0||!project){setStatus('Nothing to save');return;}
   try{
     const code=editor.getValue();
-    if(code.trim()){
+    const cpp=isCppFile(activeFilePath());
+    if(code.trim() && cpp){
       const f=await api('POST','/api/format',{code});
       if(f.formatted && f.formatted!==code) editor.setValue(f.formatted);
     }
     flushCurrentToTab();
     const t=openTabs[activeIdx];
     await api('PUT',`/api/projects/${project.id}/file`,{path:t.path,content:t.content});
-    t.dirty=false; renderTabs(); setStatus('Saved & formatted ✓');
+    t.dirty=false; renderTabs(); setStatus(cpp?'Saved & formatted ✓':'Saved ✓');
   }catch(e){ flashErr(e); }
 }
 function scheduleAutoSave(){ if(!project||activeIdx<0)return; clearTimeout(autoSaveTimer); autoSaveTimer=setTimeout(saveActiveFile,1200); }
