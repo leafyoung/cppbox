@@ -14,15 +14,23 @@ fn hdrs(secret: &str) -> reqwest::header::HeaderMap {
 }
 
 /// Append the minted keys to the Worker's allowlist. Best-effort.
-pub async fn push_keys(url: Option<&str>, secret: Option<&str>, keys: &[String]) -> Value {
+/// Push keys to the Worker allowlist. Each key carries the assignment's
+/// late policy: for "reject", expires_ms is the deadline the Worker enforces;
+/// for "filter" (default), expires_ms is null so the Worker accepts everything
+/// and the pull filter does the skipping.
+pub async fn push_keys(url: Option<&str>, secret: Option<&str>, keys: &[(String, Option<i64>)]) -> Value {
     let (Some(url), Some(secret)) = (url, secret) else {
         return json!({ "skipped": true });
     };
     let client = reqwest::Client::new();
+    let entries: Vec<Value> = keys
+        .iter()
+        .map(|(k, exp)| json!({ "key": k, "expires_ms": exp }))
+        .collect();
     match client
         .post(format!("{}/admin/keys", url.trim_end_matches('/')))
         .headers(hdrs(secret))
-        .json(&json!({ "keys": keys }))
+        .json(&json!({ "keys": entries }))
         .timeout(std::time::Duration::from_secs(20))
         .send()
         .await

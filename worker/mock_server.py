@@ -20,14 +20,17 @@ FORM = """<!doctype html><html><body style="font-family:sans-serif;max-width:480
 <button>Submit</button></form><div id=r></div></body></html>"""
 
 
-def load_keys():
+def load_kv():
     if os.path.exists(KV_FILE):
-        return json.load(open(KV_FILE))
-    return []
+        data = json.load(open(KV_FILE))
+        if isinstance(data, list):  # legacy list format
+            return {"valid": data, "deadlines": {}}
+        return {"valid": data.get("valid", []), "deadlines": data.get("deadlines", {})}
+    return {"valid": [], "deadlines": {}}
 
 
-def save_keys(keys):
-    json.dump(sorted(set(keys)), open(KV_FILE, "w"))
+def save_kv(kv):
+    json.dump(kv, open(KV_FILE, "w"))
 
 
 class H(BaseHTTPRequestHandler):
@@ -85,10 +88,21 @@ class H(BaseHTTPRequestHandler):
             if not self._authed():
                 return self._json(401, {"error": "unauthorized"})
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or "{}")
-            keys = [k for k in body.get("keys", []) if isinstance(k, str) and k.strip()]
-            cur = load_keys()
+            kv = load_kv()
+            keys = []
+            for item in body.get("keys", []):
+                if isinstance(item, str) and item.strip():
+                    keys.append(item)
+                elif isinstance(item, dict) and item.get("key"):
+                    keys.append(item["key"])
+                    if item.get("expires_ms") is not None:
+                        kv["deadlines"][item["key"]] = item["expires_ms"]
+                    else:
+                        kv["deadlines"].pop(item["key"], None)
+            cur = kv["valid"]
             merged = sorted(set(cur) | set(keys))
-            save_keys(merged)
+            kv["valid"] = merged
+            save_kv(kv)
             return self._json(200, {"ok": True, "total": len(merged), "added": len(merged) - len(cur)})
         if p == "/submit":
             return self._handle_submit()
@@ -124,11 +138,14 @@ class H(BaseHTTPRequestHandler):
                     files[fname] = body.rstrip(b"\r\n")
         if not key:
             return self._json(400, {"error": "missing key"})
-        if key not in load_keys():
+        kv = load_kv()
+        if key not in kv["valid"]:
             return self._json(403, {"error": "invalid or unissued key"})
+        dl = kv["deadlines"].get(key)
+        if dl is not None and int(time.time() * 1000) > dl:
+            return self._json(403, {"error": "deadline passed \u2014 submissions are closed for this assignment"})
         if not files:
             return self._json(400, {"error": "no files attached"})
-        import time
         counter = int(time.time() * 1000)
         meta = {"key": key, "counter": counter, "submitted_at": datetime.now(timezone.utc).isoformat(), "files": list(files)}
         buf = io.BytesIO()

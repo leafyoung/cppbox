@@ -1007,10 +1007,14 @@ function renderAdminRight(){
       <div class="admin-label">Assignments</div>
       ${d.assignment_list.length ? d.assignment_list.map(a=>`
         <div class="asg-card">
-          <div class="top"><span class="nm">${esc(a.name)}</span><span class="asg">slot ${a.slot}</span>${a.expires_ms?`<span class="asg" title="Submission deadline">⏰ ${new Date(a.expires_ms).toLocaleString()}</span>`:''}</div>
+          <div class="top"><span class="nm">${esc(a.name)}</span><span class="asg">slot ${a.slot}</span>${a.expires_ms?`<span class="asg" title="Submission deadline">⏰ ${new Date(a.expires_ms).toLocaleString()}</span>`:''}${(a.late_policy||'filter')==='reject'?'<span class="asg" title="Late submissions are rejected at submission time">🚫 reject late</span>':'<span class="asg" title="Late submissions are kept in the queue but skipped at pull">⬇ filter late</span>'}</div>
           <div class="row">
             <input class="admin-input" id="root_${a.id}" placeholder="Root folder path (e.g. /home/you/Asgn1)" value="${esc(a.root_folder||'')}" style="flex:1">
-            <input class="admin-input" id="exp_${a.id}" type="datetime-local" value="${msToDTLocal(a.expires_ms)}" title="Submission deadline — later submissions stay in the queue but are not pulled (empty = no expiry)" style="width:220px">
+            <input class="admin-input" id="exp_${a.id}" type="datetime-local" value="${msToDTLocal(a.expires_ms)}" title="Submission deadline (empty = no expiry)" style="width:220px">
+            <select class="admin-input" id="lp_${a.id}" title="Late submission policy" style="width:230px">
+              <option value="filter" ${(a.late_policy||'filter')!=='reject'?'selected':''}>Late: receive &amp; filter at pull</option>
+              <option value="reject" ${(a.late_policy||'filter')==='reject'?'selected':''}>Late: reject at submission</option>
+            </select>
             <button class="mini" onclick="saveAsgSettings('${a.id}')">Save</button>
           </div>
           <div class="row">
@@ -1109,9 +1113,10 @@ async function saveAsgSettings(aid){
   const root=document.getElementById('root_'+aid).value.trim();
   const dv=document.getElementById('exp_'+aid).value;
   const ms=dv?new Date(dv).getTime():null;
-  try{ const r=await api('PUT',`/api/admin/assignments/${aid}`,{root_folder:root,expires_ms:ms});
-    if(adminDetail){ const a=_asgById(aid); if(a){ a.root_folder=r.root_folder; a.expires_ms=r.expires_ms; renderAdminRight(); } }
-    setStatus('Assignment settings saved');
+  const lp=document.getElementById('lp_'+aid).value;
+  try{ const r=await api('PUT',`/api/admin/assignments/${aid}`,{root_folder:root,expires_ms:ms,late_policy:lp});
+    if(adminDetail){ const a=_asgById(aid); if(a){ a.root_folder=r.root_folder; a.expires_ms=r.expires_ms; a.late_policy=r.late_policy; renderAdminRight(); } }
+    setStatus('Assignment settings saved (Worker deadlines updated)');
   }catch(e){ flashErr(e); }
 }
 function msToDTLocal(ms){

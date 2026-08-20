@@ -39,6 +39,14 @@ async function handleSubmit(request, env) {
   const valid = await readValidKeys(env);
   if (!valid.includes(key)) return json({ error: 'invalid or unissued key — contact your instructor' }, 403);
 
+  // server-side deadline rejection (only assignments with late_policy=reject
+  // carry a deadline; filter-policy keys carry none and are accepted)
+  const deadlines = await readDeadlines(env);
+  const dl = deadlines[key];
+  if (dl != null && Date.now() > dl) {
+    return json({ error: 'deadline passed — submissions are closed for this assignment' }, 403);
+  }
+
   const files = {};
   let count = 0;
   for (const [, value] of form.entries()) {
@@ -65,13 +73,32 @@ async function readValidKeys(env) {
   try { const a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch { return []; }
 }
 
+async function readDeadlines(env) {
+  const raw = await env.KV.get('key_deadlines');
+  if (!raw) return {};
+  try { const o = JSON.parse(raw); return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {}; } catch { return {}; }
+}
+
 async function handlePushKeys(request, env) {
   const body = await request.json().catch(() => ({}));
-  const keys = Array.isArray(body.keys) ? body.keys.filter(k => typeof k === 'string' && k.trim()) : [];
+  const raw = Array.isArray(body.keys) ? body.keys : [];
+  if (!raw.length) return json({ error: 'no keys provided' }, 400);
+  // keys may be plain strings (legacy) or {key, expires_ms|null} objects
+  const keys = [];
+  const deadlines = await readDeadlines(env);
+  for (const item of raw) {
+    if (typeof item === 'string' && item.trim()) { keys.push(item); }
+    else if (item && typeof item.key === 'string' && item.key.trim()) {
+      keys.push(item.key);
+      if (item.expires_ms != null) deadlines[item.key] = item.expires_ms;
+      else delete deadlines[item.key];
+    }
+  }
   if (!keys.length) return json({ error: 'no keys provided' }, 400);
   const current = await readValidKeys(env);
   const merged = [...new Set([...current, ...keys])];
   await env.KV.put('valid_keys', JSON.stringify(merged));
+  await env.KV.put('key_deadlines', JSON.stringify(deadlines));
   return json({ ok: true, total: merged.length, added: merged.length - current.length });
 }
 

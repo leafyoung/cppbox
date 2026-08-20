@@ -46,6 +46,7 @@ pub struct Assignment {
     pub slot: Option<i64>,
     pub root_folder: Option<String>,
     pub expires_ms: Option<i64>,
+    pub late_policy: Option<String>, // "filter" (default) | "reject"
     pub created_at: Option<String>,
 }
 
@@ -113,7 +114,7 @@ pub async fn migrate(db: &SqlitePool) -> anyhow::Result<()> {
     ).execute(db).await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS assignments (
-            id TEXT PRIMARY KEY, class_id TEXT, name TEXT, slot INTEGER, root_folder TEXT, expires_ms INTEGER, created_at TEXT
+            id TEXT PRIMARY KEY, class_id TEXT, name TEXT, slot INTEGER, root_folder TEXT, expires_ms INTEGER, late_policy TEXT, created_at TEXT
         )",
     ).execute(db).await?;
     sqlx::query(
@@ -140,6 +141,7 @@ pub async fn migrate(db: &SqlitePool) -> anyhow::Result<()> {
         .await?;
     // migration for pre-existing DBs
     let _ = sqlx::query("ALTER TABLE assignments ADD COLUMN expires_ms INTEGER").execute(db).await;
+    let _ = sqlx::query("ALTER TABLE assignments ADD COLUMN late_policy TEXT").execute(db).await;
     Ok(())
 }
 

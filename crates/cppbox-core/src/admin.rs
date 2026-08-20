@@ -38,11 +38,11 @@ pub fn routes() -> Router<AppState> {
 // ── request bodies ───────────────────────────────────────────────────────
 #[derive(Deserialize)] struct ClassCreate { name: String, course: String, cohort: String }
 #[derive(Deserialize)] struct StudentImport { text: String }
-#[derive(Deserialize)] struct AssignmentCreate { name: String, slot: i64, root_folder: Option<String>, expires_ms: Option<i64> }
+#[derive(Deserialize)] struct AssignmentCreate { name: String, slot: i64, root_folder: Option<String>, expires_ms: Option<i64>, late_policy: Option<String> }
 #[derive(Deserialize)] struct OrganizeRequest { zips_folder: String }
 #[derive(Deserialize)] struct WorkspaceOpen { root_folder: String, assignment_id: Option<String> }
 #[derive(Deserialize)] struct FeedbackUpdate { text: String, score: Option<String>, #[serde(default)] publish: bool }
-#[derive(Deserialize)] struct AssignmentRootUpdate { root_folder: String, expires_ms: Option<i64> }
+#[derive(Deserialize)] struct AssignmentRootUpdate { root_folder: String, expires_ms: Option<i64>, late_policy: Option<String> }
 #[derive(Deserialize)] struct WorkerSettings { worker_url: Option<String>, worker_secret: Option<String> }
 #[derive(Deserialize)] struct KeyCreate { student_name: String, course: String, cohort: String, slot: i64 }
 #[derive(Deserialize)] struct SubmitRequest { key: String, project_id: String }
@@ -173,7 +173,7 @@ async fn get_class(State(st): State<AppState>, Path(cid): Path<String>) -> Resul
         "id": s.id, "serial": s.serial, "name": s.name, "email": s.email
     })).collect();
     let assignment_list: Vec<Value> = assignments.iter().map(|a| json!({
-        "id": a.id, "name": a.name, "slot": a.slot, "root_folder": a.root_folder, "expires_ms": a.expires_ms
+        "id": a.id, "name": a.name, "slot": a.slot, "root_folder": a.root_folder, "expires_ms": a.expires_ms, "late_policy": a.late_policy.clone().unwrap_or_else(|| "filter".into())
     })).collect();
     let mut meta = class_meta(&c, student_list.len() as i64, assignment_list.len() as i64);
     meta.as_object_mut().unwrap().insert("student_list".into(), json!(student_list));
@@ -231,8 +231,8 @@ async fn create_assignment(State(st): State<AppState>, Path(cid): Path<String>, 
         .fetch_optional(&st.db).await.map_err(db_err)?
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Class not found".into()))?;
     let aid = uuid();
-    sqlx::query("INSERT INTO assignments(id,class_id,name,slot,root_folder,expires_ms,created_at) VALUES (?,?,?,?,?,?,?)")
-        .bind(&aid).bind(&cid).bind(&req.name).bind(req.slot).bind(&req.root_folder).bind(req.expires_ms).bind(now())
+    sqlx::query("INSERT INTO assignments(id,class_id,name,slot,root_folder,expires_ms,late_policy,created_at) VALUES (?,?,?,?,?,?,?,?)")
+        .bind(&aid).bind(&cid).bind(&req.name).bind(req.slot).bind(&req.root_folder).bind(req.expires_ms).bind(req.late_policy.clone().unwrap_or_else(|| "filter".into())).bind(now())
         .execute(&st.db).await.map_err(db_err)?;
     // mint a 256-bit key for every student
     let students = sqlx::query_as::<_, Student>("SELECT * FROM students WHERE class_id = ?").bind(&cid)
@@ -248,10 +248,14 @@ async fn create_assignment(State(st): State<AppState>, Path(cid): Path<String>, 
         minted.push(key);
     }
     tx.commit().await.map_err(db_err)?;
-    // push to the submission Worker (best-effort)
+    // push to the submission Worker (best-effort); the deadline is only
+    // enforced server-side when late_policy == "reject"
+    let policy = req.late_policy.clone().unwrap_or_else(|| "filter".into());
+    let worker_deadline = if policy == "reject" { req.expires_ms } else { None };
+    let entries: Vec<(String, Option<i64>)> = minted.iter().map(|k| (k.clone(), worker_deadline)).collect();
     let (wurl, wsecret) = worker_creds(&st.db).await;
     let remote_status = if wurl.is_some() && wsecret.is_some() {
-        remote::push_keys(wurl.as_deref(), wsecret.as_deref(), &minted).await
+        remote::push_keys(wurl.as_deref(), wsecret.as_deref(), &entries).await
     } else { json!({ "skipped": true }) };
     Ok(Json(json!({
         "id": aid, "name": req.name, "slot": req.slot,
@@ -324,10 +328,22 @@ async fn update_assignment(State(st): State<AppState>, Path(aid): Path<String>, 
         "" => None,
         v => Some(v),
     };
-    sqlx::query("UPDATE assignments SET root_folder = ?, expires_ms = ? WHERE id = ?")
-        .bind(root).bind(req.expires_ms).bind(&aid)
+    let policy = req.late_policy.clone().unwrap_or_else(|| "filter".into());
+    sqlx::query("UPDATE assignments SET root_folder = ?, expires_ms = ?, late_policy = ? WHERE id = ?")
+        .bind(root).bind(req.expires_ms).bind(&policy).bind(&aid)
         .execute(&st.db).await.map_err(db_err)?;
-    Ok(Json(json!({ "ok": true, "root_folder": root, "expires_ms": req.expires_ms })))
+    // re-push the assignment's keys so the Worker's deadline matches
+    let worker_deadline = if policy == "reject" { req.expires_ms } else { None };
+    let keys: Vec<String> = sqlx::query_scalar::<_, String>("SELECT key FROM submission_keys WHERE assignment_id = ?")
+        .bind(&aid).fetch_all(&st.db).await.map_err(db_err)?;
+    if !keys.is_empty() {
+        let entries: Vec<(String, Option<i64>)> = keys.into_iter().map(|k| (k, worker_deadline)).collect();
+        let (wurl, wsecret) = worker_creds(&st.db).await;
+        if wurl.is_some() && wsecret.is_some() {
+            let _ = remote::push_keys(wurl.as_deref(), wsecret.as_deref(), &entries).await;
+        }
+    }
+    Ok(Json(json!({ "ok": true, "root_folder": root, "expires_ms": req.expires_ms, "late_policy": policy })))
 }
 
 async fn open_workspace(State(st): State<AppState>, Json(req): Json<WorkspaceOpen>) -> Result<Json<Value>, ApiError> {
