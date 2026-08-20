@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=https://www.schemastore.org/prek.json
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '^(icon/|src-tauri/icons/)'
+      - id: end-of-file-fixer
+        exclude: '^(icon/|src-tauri/icons/)'
+      - id: check-yaml
+        exclude: '^src-tauri/gen/'
+      - id: check-toml
+      - id: check-json
+        exclude: '^src-tauri/gen/'
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+
+  - repo: local
+    hooks:
+      # Format the whole Rust workspace. prek aborts the commit if it rewrites
+      # anything, so you re-stage the formatted files.
+      - id: cargo-fmt
+        name: cargo fmt (workspace)
+        entry: cargo fmt --all
+        language: system
+        types: [rust]
+        pass_filenames: false
+      # Syntax-check the standalone worker JS (the frontend's inline script is
+      # embedded in index.html and is exercised by the build/tests instead).
+      - id: js-syntax
+        name: node --check (worker JS)
+        entry: node --check worker/src/index.js
+        language: system
+        files: '\.js$'
+        pass_filenames: false
