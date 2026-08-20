@@ -1,0 +1,45 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0B1A28"/>
+      <stop offset="1" stop-color="#123244"/>
+    </linearGradient>
+    <linearGradient id="topFace" x1="220" y1="200" x2="804" y2="560" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9AF8E8"/>
+      <stop offset="1" stop-color="#4FDCC7"/>
+    </linearGradient>
+    <linearGradient id="leftFace" x1="220" y1="380" x2="512" y2="880" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#33B6A6"/>
+      <stop offset="1" stop-color="#177268"/>
+    </linearGradient>
+    <linearGradient id="rightFace" x1="512" y1="380" x2="804" y2="880" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#12433E"/>
+      <stop offset="1" stop-color="#082523"/>
+    </linearGradient>
+    <clipPath id="topClip">
+      <polygon points="512,180 804,380 512,580 220,380"/>
+    </clipPath>
+  </defs>
+
+  <rect x="24" y="24" width="976" height="976" rx="216" ry="216" fill="url(#bg)"/>
+
+  <!-- Left face -->
+  <polygon points="220,380 512,580 512,900 220,700" fill="url(#leftFace)"/>
+  <!-- Right face -->
+  <polygon points="512,580 804,380 804,700 512,900" fill="url(#rightFace)"/>
+  <!-- Top face -->
+  <polygon points="512,180 804,380 512,580 220,380" fill="url(#topFace)"/>
+
+  <!-- Bold plank seam forming a "+" -->
+  <g clip-path="url(#topClip)">
+    <rect x="480" y="170" width="64" height="420" fill="#0F6459"/>
+    <rect x="210" y="348" width="604" height="64" fill="#0F6459"/>
+  </g>
+
+  <!-- Bold crate edges for legibility at small sizes -->
+  <g fill="none" stroke="#03100D" stroke-width="14" stroke-linejoin="round">
+    <polygon points="512,180 804,380 512,580 220,380"/>
+    <polygon points="220,380 512,580 512,900 220,700"/>
+    <polygon points="512,580 804,380 804,700 512,900"/>
+  </g>
+</svg>

@@ -70,9 +70,10 @@ git push origin v0.1.0
 CPPBOX_FRONTEND="$PWD/frontend" cargo run -p cppbox
 ```
 
-## Retire the Python backend
+## Python backend: retired
 
-The Rust backend (R1–R3) is feature-complete and verified against the same
-data/cppbox.db + projects/ as Python. Once satisfied, delete `backend/` and
-the `uv`/pyproject machinery — only `crates/cppbox-core`, `src-tauri`,
-`frontend/`, `worker/`, and `Dockerfile.sandbox` remain.
+The Rust backend was verified end-to-end from a clean state (make-run,
+settings, admin + local submit with git snapshot, trash, frontend serving via
+`CPPBOX_FRONTEND`) and the Python backend has since been removed. Only
+`crates/cppbox-core`, `src-tauri`, `frontend/`, `worker/` (incl. the
+stdlib-only `mock_server.py` test double), and `Dockerfile.sandbox` remain.

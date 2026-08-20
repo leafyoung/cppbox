@@ -1,0 +1,81 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0B1A28"/>
+      <stop offset="0.55" stop-color="#0E2436"/>
+      <stop offset="1" stop-color="#123244"/>
+    </linearGradient>
+
+    <radialGradient id="glow" cx="512" cy="470" r="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1F6B63" stop-opacity="0.55"/>
+      <stop offset="0.6" stop-color="#164A46" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#0B1A28" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="topFace" x1="269.5" y1="260" x2="754.5" y2="540" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8FF6E4"/>
+      <stop offset="1" stop-color="#4FDCC7"/>
+    </linearGradient>
+
+    <linearGradient id="leftFace" x1="269.5" y1="400" x2="512" y2="820" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#33B6A6"/>
+      <stop offset="1" stop-color="#177268"/>
+    </linearGradient>
+
+    <linearGradient id="rightFace" x1="512" y1="400" x2="754.5" y2="820" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#12433E"/>
+      <stop offset="1" stop-color="#082523"/>
+    </linearGradient>
+
+    <clipPath id="topClip">
+      <polygon points="512,260 754.5,400 512,540 269.5,400"/>
+    </clipPath>
+  </defs>
+
+  <!-- App icon background -->
+  <rect x="24" y="24" width="976" height="976" rx="216" ry="216" fill="url(#bg)"/>
+  <rect x="24" y="24" width="976" height="976" rx="216" ry="216" fill="url(#glow)"/>
+
+  <!-- soft ground shadow -->
+  <ellipse cx="512" cy="838" rx="230" ry="34" fill="#020A10" opacity="0.45"/>
+
+  <!-- ============ ISOMETRIC CRATE ============ -->
+
+  <!-- Left face -->
+  <polygon points="269.5,400 512,540 512,820 269.5,680" fill="url(#leftFace)"/>
+  <!-- Right face -->
+  <polygon points="512,540 754.5,400 754.5,680 512,820" fill="url(#rightFace)"/>
+  <!-- Top face -->
+  <polygon points="512,260 754.5,400 512,540 269.5,400" fill="url(#topFace)"/>
+
+  <!-- Top face plank seam forming a "+" -->
+  <g clip-path="url(#topClip)">
+    <rect x="490" y="252" width="44" height="296" fill="#0F6459" opacity="0.9"/>
+    <rect x="261.5" y="378" width="501" height="44" fill="#0F6459" opacity="0.9"/>
+    <rect x="490" y="252" width="44" height="296" fill="none" stroke="#EAFBF6" stroke-width="2" opacity="0.35"/>
+    <rect x="261.5" y="378" width="501" height="44" fill="none" stroke="#EAFBF6" stroke-width="2" opacity="0.35"/>
+  </g>
+
+  <!-- Crate edge lines -->
+  <g fill="none" stroke="#04120F" stroke-width="6" stroke-linejoin="round" opacity="0.55">
+    <polygon points="512,260 754.5,400 512,540 269.5,400"/>
+    <polygon points="269.5,400 512,540 512,820 269.5,680"/>
+    <polygon points="512,540 754.5,400 754.5,680 512,820"/>
+  </g>
+  <polyline points="512,260 512,540" stroke="#04120F" stroke-width="4" opacity="0.35"/>
+
+  <!-- "C" bracket strap on left face -->
+  <path d="M 430 470 A 92 92 0 1 0 430 690"
+        fill="none" stroke="#EAFBF6" stroke-width="26" stroke-linecap="round" opacity="0.92"/>
+  <path d="M 430 470 A 92 92 0 1 0 430 690"
+        fill="none" stroke="#0B2E29" stroke-width="26" stroke-linecap="round" opacity="0.18"
+        transform="translate(4,4)"/>
+
+  <!-- "+" rivet on right face -->
+  <g transform="translate(632,600)">
+    <circle r="46" fill="#04120F" opacity="0.28"/>
+    <rect x="-30" y="-8" width="60" height="16" rx="6" fill="#EAFBF6"/>
+    <rect x="-8" y="-30" width="16" height="60" rx="6" fill="#EAFBF6"/>
+  </g>
+
+</svg>

@@ -18,7 +18,10 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::connect(&data_dir.join("cppbox.db")).await?;
     db::migrate(&pool).await?;
 
-    let app = build_app(AppState { db: pool, root: root.clone() }, root.join("frontend"));
+    let frontend = std::env::var("CPPBOX_FRONTEND")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| root.join("frontend"));
+    let app = build_app(AppState { db: pool, root: root.clone() }, frontend);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();

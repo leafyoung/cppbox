@@ -1,15 +1,6 @@
-# ── Python ──
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# ── Virtual environments ──
-.venv
-
 # ── Runtime data (generated; never source) ──
+# (worker/mock_server.py is still Python; ignore its bytecode)
+__pycache__/
 # SQLite database (cppbox.db)
 data/
 # per-project working folders (incl. nested student git repos)
