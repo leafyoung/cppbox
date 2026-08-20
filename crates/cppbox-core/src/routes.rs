@@ -36,6 +36,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/format", post(format_code_endpoint))
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/projects/{pid}/run", post(run_project))
+        .route("/api/projects/{pid}/rebuild", post(rebuild_project))
         .route("/api/projects/{pid}/check", post(check_project))
         .route("/ws/lsp", get(lsp::ws_handler))
         .route("/ws/debug", get(debug::ws_handler))
@@ -474,7 +475,27 @@ async fn run_project(
     let lpv = lp(&s).map(str::to_string);
     let std = s.cpp_standard.unwrap_or_else(|| "c++17".into());
     Ok(Json(
-        sandbox::make_and_run(&st.root, &pid, lpv.as_deref(), &req.stdin, &std).await,
+        sandbox::make_and_run(&st.root, &pid, lpv.as_deref(), &req.stdin, &std, false).await,
+    ))
+}
+
+/// make clean && make && execute (forced full rebuild)
+async fn rebuild_project(
+    State(st): State<AppState>,
+    Path(pid): Path<String>,
+    Json(req): Json<RunProjectRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let s = fetch_one(&st.db, &pid).await?;
+    let src = storage::collect_source_files(&st.root, &pid, lp(&s));
+    if src.is_empty() {
+        return Ok(Json(
+            json!({ "ok": false, "stage": "compile", "compile_output": "No source files found.", "run_output": "" }),
+        ));
+    }
+    let lpv = lp(&s).map(str::to_string);
+    let std = s.cpp_standard.unwrap_or_else(|| "c++17".into());
+    Ok(Json(
+        sandbox::make_and_run(&st.root, &pid, lpv.as_deref(), &req.stdin, &std, true).await,
     ))
 }
 

@@ -262,6 +262,7 @@ button { font-family:inherit; }
       <button class="btn btn-ghost" onclick="showVscode()">🔗 VS Code</button>
       <button class="btn" id="dbgBtn" onclick="debugToggle()" title="Debug with lldb (F5)">🐞 Debug</button>
       <button class="btn btn-green" id="runBtn" onclick="runCode()">▶ Run</button>
+      <button class="btn" id="rebuildBtn" onclick="runCode(true)" title="make clean && make && run (Shift+Ctrl+Enter)">🔄 Rebuild</button>
     </div>
     <div class="tabs" id="tabs"></div>
     <div class="editor-wrap"><textarea id="editor"></textarea></div>
@@ -446,7 +447,7 @@ let editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
   mode: cppMode('c++17'), theme:'material-ocean', lineNumbers:true, indentUnit:2, tabSize:2, autofocus:true,
   gutters:['breakpoints','CodeMirror-lint-markers'], hintOptions:{hint:clangHint, completeSingle:false},
   lint:{ async:true, getAnnotations:lintGetAnnotations },
-  extraKeys:{ 'Ctrl-Enter':runCode,'Cmd-Enter':runCode,'Ctrl-S':saveActiveFile,'Cmd-S':saveActiveFile,
+  extraKeys:{ 'Ctrl-Enter':()=>runCode(),'Cmd-Enter':()=>runCode(),'Shift-Ctrl-Enter':()=>runCode(true),'Shift-Cmd-Enter':()=>runCode(true),'Ctrl-S':saveActiveFile,'Cmd-S':saveActiveFile,
     'Ctrl-F':saveAndFormat,'Cmd-F':saveAndFormat,'Ctrl-Space':'autocomplete','Shift-Space':'autocomplete','F5':debugToggle },
 });
 
@@ -759,21 +760,23 @@ function persistSettings(){
 function onThemeChange(){ const id=document.getElementById('themeSelect').value; applyTheme(id); persistSettings(); }
 
 // ── Run ──────────────────────────────────────────────────────────────────
-async function runCode(){
+async function runCode(rebuild=false){
   if(!project){setStatus('Open a project first');return;}
   await saveActiveFile();
   const stdin=document.getElementById('stdinInput').value;
-  const b=document.getElementById('runBtn'), o=document.getElementById('outputContent');
-  b.disabled=true; b.innerHTML='<span class="spinner"></span> Running...'; o.innerHTML='<span style="color:var(--dim)">Compiling...</span>';
+  const b=document.getElementById(rebuild?'rebuildBtn':'runBtn'), o=document.getElementById('outputContent');
+  const label=rebuild?'🔄 Rebuild':'▶ Run';
+  b.disabled=true; b.innerHTML='<span class="spinner"></span> '+(rebuild?'Rebuilding...':'Running...');
+  o.innerHTML='<span style="color:var(--dim)">'+(rebuild?'make clean &amp;&amp; make...':'Compiling...')+'</span>';
   try{
-    const res=await api('POST',`/api/projects/${project.id}/run`,{stdin});
+    const res=await api('POST',`/api/projects/${project.id}/${rebuild?'rebuild':'run'}`,{stdin});
     if(res.stage==='compile'&&!res.ok){ o.innerHTML=`<span class="err">Compilation failed:</span>\n${esc(res.compile_output)}`; switchOutTab('compile'); return; }
     if(outTab==='compile'){ o.innerHTML=esc(res.compile_output||'(no warnings)'); }
     else { o.innerHTML=res.run_output?esc(res.run_output):'<span class="ok">Program ran successfully (no output).</span>';
       if(res.exit_code!==0&&!res.timed_out)o.innerHTML+=`\n\n<span class="err">Exit code: ${res.exit_code}</span>`;
       if(res.timed_out)o.innerHTML+='\n\n<span class="err">⚠ Timed out</span>'; }
   }catch(e){ o.innerHTML=`<span class="err">Error:</span> ${esc(e.message)}`; }
-  finally{ b.disabled=false; b.innerHTML='▶ Run'; }
+  finally{ b.disabled=false; b.innerHTML=label; }
 }
 
 // ── Format ───────────────────────────────────────────────────────────────

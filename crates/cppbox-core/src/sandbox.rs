@@ -76,6 +76,7 @@ pub async fn make_and_run(
     local_path: Option<&str>,
     stdin: &str,
     std: &str,
+    clean: bool,
 ) -> Value {
     let dir = crate::storage::project_root(root, pid, local_path);
     if !dir.join("Makefile").exists() {
@@ -87,7 +88,12 @@ pub async fn make_and_run(
             return json!({ "ok": false, "stage": "compile", "compile_output": format!("project dir error: {e}"), "run_output": "" })
         }
     };
-    // 1) make (rebuilds only when sources changed)
+    // 1) make (incremental; with clean, 'make clean' first, best-effort)
+    let build_cmd = if clean {
+        "make clean >/dev/null 2>&1 || true; make 2>&1"
+    } else {
+        "make 2>&1"
+    };
     let mut c = Command::new(runtime());
     c.args([
         "run",
@@ -109,7 +115,7 @@ pub async fn make_and_run(
     .arg(format!("{}:/home/sandbox/work:rw", abs.display()))
     .args(["-w", "/home/sandbox/work"])
     .arg(sandbox_image())
-    .args(["sh", "-c", "make 2>&1"])
+    .args(["sh", "-c", build_cmd])
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
     let out = match tokio::time::timeout(Duration::from_secs(60), c.output()).await {
