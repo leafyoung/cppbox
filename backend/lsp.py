@@ -5,11 +5,12 @@ The backend handles Content-Length framing to/from clangd's stdio.
 A custom method `$/sync` {std, files} writes project files to the workspace
 and returns {workspace} so the frontend can build file:// URIs.
 """
-import os
-import json
-import uuid
+
 import asyncio
+import json
+import os
 import shutil
+import uuid
 from pathlib import Path
 
 CLANGD = shutil.which("clangd") or "clangd"
@@ -29,7 +30,10 @@ class LspSession:
         self.ws_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(self.ws_dir, 0o777)
         self.proc = await asyncio.create_subprocess_exec(
-            CLANGD, "--log=error", "--pch-storage=memory", "--clang-tidy",
+            CLANGD,
+            "--log=error",
+            "--pch-storage=memory",
+            "--clang-tidy",
             cwd=str(self.ws_dir),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -75,11 +79,17 @@ class LspSession:
             p.write_text(f["content"])
         # write .clangd into the bridge workspace so clang-tidy checks are active here too
         from backend.storage import clangd_config_text
+
         (self.ws_dir / ".clangd").write_text(clangd_config_text(std))
-        await ws.send_text(json.dumps({
-            "jsonrpc": "2.0", "id": msg.get("id"),
-            "result": {"workspace": str(self.ws_dir), "std": std},
-        }))
+        await ws.send_text(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg.get("id"),
+                    "result": {"workspace": str(self.ws_dir), "std": std},
+                }
+            )
+        )
 
     async def _send_to_clangd(self, msg):
         data = json.dumps(msg).encode("utf-8")
@@ -101,7 +111,7 @@ class LspSession:
                         break
                 body = await reader.readexactly(length)
                 await ws.send_text(body.decode("utf-8", errors="replace"))
-            except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, Exception):
+            except asyncio.IncompleteReadError, asyncio.LimitOverrunError, Exception:
                 break
 
     async def _drain(self, stream):

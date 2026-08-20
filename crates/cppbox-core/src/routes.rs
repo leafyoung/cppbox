@@ -28,11 +28,13 @@ pub fn routes() -> Router<AppState> {
             "/api/projects/{pid}/file",
             get(read_file).put(write_file).delete(delete_file),
         )
+        .route("/api/projects/{pid}/file/raw", get(read_file_raw))
         .route("/api/projects/{pid}/file/move", post(move_file))
         // compile / run / diagnostics / format
         .route("/api/run", post(run_code))
         .route("/api/check", post(check_code))
         .route("/api/format", post(format_code_endpoint))
+        .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/projects/{pid}/run", post(run_project))
         .route("/api/projects/{pid}/check", post(check_project))
         .route("/ws/lsp", get(lsp::ws_handler))
@@ -395,6 +397,44 @@ async fn format_code_endpoint(Json(req): Json<FormatRequest>) -> Json<Value> {
     Json(json!({ "formatted": sandbox::format_code(&req.code, "LLVM").await }))
 }
 
+/// Raw file bytes (PDF preview etc.). Content-Type set by extension.
+async fn read_file_raw(
+    State(st): State<AppState>,
+    Path(pid): Path<String>,
+    Query(q): Query<FilePathQuery>,
+) -> Result<axum::response::Response, ApiError> {
+    let s = fetch_one(&st.db, &pid).await?;
+    let lp = s.local_path.as_deref().filter(|p| !p.is_empty());
+    let target = storage::safe_join(&st.root, &pid, lp, &q.path)
+        .map_err(|e| ApiError(StatusCode::BAD_REQUEST, e))?;
+    let bytes = std::fs::read(&target)
+        .map_err(|_| ApiError(StatusCode::NOT_FOUND, "File not found".into()))?;
+    let ct = if q.path.to_lowercase().ends_with(".pdf") {
+        "application/pdf"
+    } else {
+        "application/octet-stream"
+    };
+    Ok(([(axum::http::header::CONTENT_TYPE, ct)], bytes).into_response())
+}
+
+// ── user settings (~/.cppbox/cppbox.yaml) ──────────────────────────────
+async fn get_settings() -> Json<Value> {
+    let s = crate::settings::load();
+    Json(json!({
+        "theme": s.theme,
+        "font_size": s.font_size,
+        "indent": s.indent,
+        "std": s.std,
+        "path": crate::settings::settings_path().display().to_string(),
+    }))
+}
+
+async fn put_settings(Json(req): Json<crate::settings::SettingsFile>) -> Result<Json<Value>, ApiError> {
+    let p = crate::settings::save(&req)
+        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "ok": true, "path": p.display().to_string() })))
+}
+
 async fn run_project(
     State(st): State<AppState>,
     Path(pid): Path<String>,
@@ -405,9 +445,10 @@ async fn run_project(
     if src.is_empty() {
         return Ok(Json(json!({ "ok": false, "stage": "compile", "compile_output": "No source files found.", "run_output": "" })));
     }
-    let files: Vec<_> = src.into_iter().map(|(n, c)| sandbox::File { name: n, content: c }).collect();
+    // Build with make (incremental; avoids re-compiling unchanged sources) then run ./app
+    let lpv = lp(&s).map(str::to_string);
     let std = s.cpp_standard.unwrap_or_else(|| "c++17".into());
-    Ok(Json(sandbox::compile_and_run(&st.root, &files, &req.stdin, &std).await))
+    Ok(Json(sandbox::make_and_run(&st.root, &pid, lpv.as_deref(), &req.stdin, &std).await))
 }
 
 async fn check_project(

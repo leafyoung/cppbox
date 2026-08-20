@@ -45,6 +45,7 @@ pub struct Assignment {
     pub name: String,
     pub slot: Option<i64>,
     pub root_folder: Option<String>,
+    pub expires_ms: Option<i64>,
     pub created_at: Option<String>,
 }
 
@@ -112,7 +113,7 @@ pub async fn migrate(db: &SqlitePool) -> anyhow::Result<()> {
     ).execute(db).await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS assignments (
-            id TEXT PRIMARY KEY, class_id TEXT, name TEXT, slot INTEGER, root_folder TEXT, created_at TEXT
+            id TEXT PRIMARY KEY, class_id TEXT, name TEXT, slot INTEGER, root_folder TEXT, expires_ms INTEGER, created_at TEXT
         )",
     ).execute(db).await?;
     sqlx::query(
@@ -137,6 +138,8 @@ pub async fn migrate(db: &SqlitePool) -> anyhow::Result<()> {
     sqlx::query("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
         .execute(db)
         .await?;
+    // migration for pre-existing DBs
+    let _ = sqlx::query("ALTER TABLE assignments ADD COLUMN expires_ms INTEGER").execute(db).await;
     Ok(())
 }
 

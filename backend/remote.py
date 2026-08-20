@@ -5,6 +5,7 @@ resolution (DB Setting -> env fallback) lives in main.py, so nothing about the
 Worker endpoint is hardcoded here. Uses only the standard library (no new
 dependency). Calls are blocking; invoke via asyncio.to_thread from async code.
 """
+
 import json
 import urllib.error
 import urllib.parse
@@ -16,8 +17,9 @@ def configured(url: str | None, secret: str | None) -> bool:
     return bool(url and secret)
 
 
-def _req(method: str, path: str, secret: str, *, data: bytes | None = None,
-         headers: dict | None = None, timeout: int = 20) -> bytes:
+def _req(
+    method: str, path: str, secret: str, *, data: bytes | None = None, headers: dict | None = None, timeout: int = 20
+) -> bytes:
     h = {"X-Admin-Secret": secret}
     if headers:
         h.update(headers)
@@ -32,8 +34,9 @@ def push_keys(url: str | None, secret: str | None, keys: list[str]) -> dict:
         return {"skipped": True}
     try:
         body = json.dumps({"keys": list(keys)}).encode()
-        out = _req("POST", url.rstrip("/") + "/admin/keys", secret, data=body,
-                   headers={"Content-Type": "application/json"})
+        out = _req(
+            "POST", url.rstrip("/") + "/admin/keys", secret, data=body, headers={"Content-Type": "application/json"}
+        )
         return json.loads(out)
     except Exception as e:
         return {"error": str(e)}

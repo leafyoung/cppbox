@@ -46,6 +46,65 @@ pub async fn compile_debug(root: &Path, files: &[File], std: &str) -> Result<(Pa
     }
 }
 
+/// Build with make (incremental) then run ./app. Ensures a Makefile exists.
+pub async fn make_and_run(root: &Path, pid: &str, local_path: Option<&str>, stdin: &str, std: &str) -> Value {
+    let dir = crate::storage::project_root(root, pid, local_path);
+    if !dir.join("Makefile").exists() {
+        crate::storage::write_makefile(root, pid, local_path, std);
+    }
+    let abs = match dir.canonicalize() {
+        Ok(a) => a,
+        Err(e) => return json!({ "ok": false, "stage": "compile", "compile_output": format!("project dir error: {e}"), "run_output": "" }),
+    };
+    // 1) make (rebuilds only when sources changed)
+    let mut c = Command::new(runtime());
+    c.args(["run", "--rm", "--user", "0", "--network", "none", "--memory", "512m", "--cpus", "2",
+            "--pids-limit", "50", "--security-opt", "label=disable"])
+        .arg("-v").arg(format!("{}:/home/sandbox/work:rw", abs.display()))
+        .args(["-w", "/home/sandbox/work"])
+        .arg(sandbox_image())
+        .args(["sh", "-c", "make 2>&1"])
+        .stdout(Stdio::piped()).stderr(Stdio::piped());
+    let out = match tokio::time::timeout(Duration::from_secs(60), c.output()).await {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => return json!({ "ok": false, "stage": "compile", "compile_output": format!("make error: {e}"), "run_output": "" }),
+        Err(_) => return json!({ "ok": false, "stage": "compile", "compile_output": "Build timed out (60s)", "run_output": "" }),
+    };
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    if !out.status.success() {
+        return json!({ "ok": false, "stage": "compile", "compile_output": text, "run_output": "" });
+    }
+    // 2) run the built executable
+    let mut r = Command::new(runtime());
+    r.args(["run", "--rm", "-i", "--network", "none", "--memory", "256m", "--cpus", "1",
+            "--pids-limit", "30", "--read-only", "--security-opt", "label=disable",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges"])
+        .arg("-v").arg(format!("{}:/home/sandbox/work:ro", abs.display()))
+        .args(["-w", "/home/sandbox/work"])
+        .arg(sandbox_image())
+        .args(["sh", "-c", "timeout 15 ./app 2>&1"])
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = match r.spawn() {
+        Ok(ch) => ch,
+        Err(e) => return json!({ "ok": false, "stage": "run", "compile_output": text, "run_output": format!("run error: {e}") }),
+    };
+    if let Some(mut sin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        let _ = sin.write_all(stdin.as_bytes()).await;
+    }
+    match tokio::time::timeout(Duration::from_secs(25), child.wait_with_output()).await {
+        Ok(Ok(o)) => {
+            let mut rtext = String::from_utf8_lossy(&o.stdout).into_owned();
+            rtext.push_str(&String::from_utf8_lossy(&o.stderr));
+            let code = o.status.code().unwrap_or(-1);
+            json!({ "ok": code == 0, "stage": "run", "compile_output": text, "run_output": rtext, "exit_code": code, "timed_out": code == 124 })
+        }
+        Ok(Err(e)) => json!({ "ok": false, "stage": "run", "compile_output": text, "run_output": format!("run error: {e}") }),
+        Err(_) => json!({ "ok": false, "stage": "run", "compile_output": text, "run_output": "Execution timed out.", "timed_out": true }),
+    }
+}
+
 /// Pick the container CLI once: podman (rootless) preferred, docker fallback.
 pub fn runtime() -> &'static str {
     static RT: OnceLock<&'static str> = OnceLock::new();

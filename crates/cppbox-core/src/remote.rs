@@ -33,7 +33,13 @@ pub async fn push_keys(url: Option<&str>, secret: Option<&str>, keys: &[String])
 }
 
 /// Drain the Worker's R2 queue into `dest` as *.zip (download + delete each).
-pub async fn pull_submissions(url: Option<&str>, secret: Option<&str>, dest: &Path) -> Value {
+/// Pull submissions for one assignment only: download objects whose key belongs
+/// to `keys` and (if `deadline_ms` is set) were submitted before the deadline.
+/// Late/foreign objects are left in R2 untouched.
+pub async fn pull_submissions(
+    url: Option<&str>, secret: Option<&str>, dest: &Path,
+    keys: &std::collections::HashSet<String>, deadline_ms: Option<i64>,
+) -> Value {
     let (Some(url), Some(secret)) = (url, secret) else {
         return json!({ "error": "Worker not configured (set URL + secret in Admin → Remote collector)" });
     };
@@ -49,10 +55,22 @@ pub async fn pull_submissions(url: Option<&str>, secret: Option<&str>, dest: &Pa
     };
     let _ = std::fs::create_dir_all(dest);
     let mut pulled = 0;
+    let mut late = 0;
+    let mut other = 0;
     let mut names: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
     for o in objects.as_array().map(|a| a.clone()).unwrap_or_default() {
         let Some(name) = o.get("name").and_then(|n| n.as_str()).map(String::from) else { continue };
+        // object name is {key}+{ms}.zip — ms is the Worker's receive timestamp
+        let stem = name.strip_suffix(".zip").unwrap_or(&name);
+        let (key, ms) = match stem.split_once('+') {
+            Some((k, m)) => (k.to_string(), m.parse::<i64>().unwrap_or(0)),
+            None => { other += 1; continue; }
+        };
+        if !keys.contains(&key) { other += 1; continue; }
+        if let Some(d) = deadline_ms {
+            if ms > d { late += 1; continue; }   // past deadline — keep in R2
+        }
         let q = urlencode(&name);
         let get_url = format!("{base}/admin/object/{q}");
         let res = client.get(&get_url).headers(hdrs(secret))
@@ -72,7 +90,7 @@ pub async fn pull_submissions(url: Option<&str>, secret: Option<&str>, dest: &Pa
             Err(e) => errors.push(format!("{name}: {e}")),
         }
     }
-    json!({ "pulled": pulled, "names": names, "errors": errors })
+    json!({ "pulled": pulled, "skipped_late": late, "skipped_other": other, "names": names, "errors": errors })
 }
 
 fn urlencode(s: &str) -> String {

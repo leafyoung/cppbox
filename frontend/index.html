@@ -221,6 +221,11 @@ button { font-family:inherit; }
 .ac-pop { position:fixed; background:var(--surface); border:1px solid var(--accent); border-radius:4px; box-shadow:0 4px 14px rgba(0,0,0,.4); max-height:180px; overflow:auto; z-index:1400; display:none; }
 .ac-pop .ac-item { padding:4px 10px; font-size:12px; font-family:'JetBrains Mono',monospace; cursor:pointer; color:var(--text); }
 .ac-pop .ac-item.active,.ac-pop .ac-item:hover { background:var(--surface2); color:var(--accent); }
+.pdf-wrap { width:86vw; height:88vh; background:var(--surface); border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; overflow:hidden; }
+.pdf-head { display:flex; align-items:center; gap:10px; padding:8px 12px; border-bottom:1px solid var(--border); font-size:13px; color:var(--text); }
+.pdf-head span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:'JetBrains Mono',monospace; font-size:12px; }
+.pdf-wrap iframe { flex:1; border:none; background:#fff; }
+
 </style>
 </head>
 <body>
@@ -247,6 +252,7 @@ button { font-family:inherit; }
       </select>
       <select id="themeSelect" onchange="onThemeChange()" title="Color scheme"></select>
       <select id="fontSelect" onchange="onFontChange()" title="Font size"></select>
+      <select id="indentSelect" onchange="onIndentChange()" title="Indent size"></select>
       <button class="btn btn-warn" id="formatBtn" onclick="formatCode()">🎨 Format</button>
       <button class="btn btn-ghost" onclick="saveActiveFile()">💾 Save</button>
       <span class="status" id="statusText"></span>
@@ -265,7 +271,7 @@ button { font-family:inherit; }
         <span class="out-tab active" data-tab="output" onclick="switchOutTab('output')">Output</span>
         <span class="out-tab" data-tab="compile" onclick="switchOutTab('compile')">Compile Log</span>
       </div>
-      <div class="out-content" id="outputContent"><span style="color:var(--dim)">Click ▶ Run to compile & execute.</span></div>
+      <div class="out-content" id="outputContent"><span style="color:var(--dim)">Click ▶ Run to compile &amp; execute.</span></div>
       <div class="stdin-wrap"><label>stdin:</label><input type="text" id="stdinInput" placeholder="Input for program (optional)"></div>
     </div>
     <div class="debug-toolbar" id="debugToolbar">
@@ -329,10 +335,17 @@ button { font-family:inherit; }
   </div>
 </div>
 
+<div class="modal-bg" id="pdfModal" style="display:none" onclick="if(event.target===this)closePdf()">
+  <div class="pdf-wrap">
+    <div class="pdf-head"><span id="pdfTitle"></span><button class="btn btn-ghost" onclick="closePdf()">✕ Close</button></div>
+    <iframe id="pdfFrame" title="PDF preview"></iframe>
+  </div>
+</div>
+
 <div class="admin-bg" id="adminPanel">
   <div class="admin-wrap">
     <div class="admin-head">
-      <h2>🎓 Admin — Classes, Students & Keys</h2>
+      <h2>🎓 Admin — Classes, Students &amp; Keys</h2>
       <button class="btn btn-ghost" onclick="hideAdmin()">✕ Close</button>
     </div>
     <div class="admin-body">
@@ -608,7 +621,27 @@ async function deleteNode(path){
 }
 
 // ── Tabs ─────────────────────────────────────────────────────────────────
+async function showPdf(path){
+  try{
+    const r=await fetch(`/api/projects/${project.id}/file/raw?path=${encodeURIComponent(path)}`);
+    if(!r.ok){ setStatus('Cannot open PDF'); return; }
+    const blob=await r.blob();
+    const url=URL.createObjectURL(blob);
+    const f=document.getElementById('pdfFrame');
+    if(f.dataset.url&&f.dataset.url.startsWith('blob:')) URL.revokeObjectURL(f.dataset.url);
+    f.src=url; f.dataset.url=url;
+    document.getElementById('pdfTitle').textContent=path;
+    document.getElementById('pdfModal').style.display='flex';
+  }catch(e){ setStatus('PDF preview failed'); }
+}
+function closePdf(){
+  document.getElementById('pdfModal').style.display='none';
+  const f=document.getElementById('pdfFrame');
+  if(f.dataset.url&&f.dataset.url.startsWith('blob:')) URL.revokeObjectURL(f.dataset.url);
+  f.src='about:blank'; delete f.dataset.url;
+}
 async function openFile(path){
+  if(path.toLowerCase().endsWith('.pdf')){ showPdf(path); return; }
   // save current tab first
   flushCurrentToTab();
   const r=await api('GET',`/api/projects/${project.id}/file?path=${encodeURIComponent(path)}`);
@@ -673,9 +706,7 @@ function buildThemeSelect(){
   const lg=Object.assign(document.createElement('optgroup'),{label:'Light'});
   for(const[k,v]of Object.entries(THEMES)){ const o=new Option(k,k); (v.kind==='dark'?og:lg).appendChild(o); }
   sel.appendChild(og); sel.appendChild(lg);
-  let saved='material-ocean';
-  try{ saved=localStorage.getItem('cppbox_theme')||'material-ocean'; }catch(e){}
-  sel.value=THEMES[saved]?saved:'material-ocean';
+  sel.value='material-ocean';
   applyTheme(sel.value);
 }
 function applyTheme(id){
@@ -687,18 +718,44 @@ function applyTheme(id){
 
 // ── Font size ────────────────────────────────────────────────────────────
 const FONT_SIZES=[11,12,13,14,15,16,18,20];
+const INDENTS=[2,4,8];
 function buildFontSelect(){
   const sel=document.getElementById('fontSelect');
   for(const s of FONT_SIZES){ sel.appendChild(new Option(s+'px', s)); }
-  let saved=14;
-  try{ saved=parseInt(localStorage.getItem('cppbox_font'))||14; }catch(e){}
-  if(!FONT_SIZES.includes(saved)) saved=14;
-  sel.value=saved;
-  applyFontSize(saved);
+  sel.value=14;
+  applyFontSize(14);
 }
 function applyFontSize(n){ document.documentElement.style.setProperty('--editor-font', n+'px'); editor.refresh(); }
-function onFontChange(){ const n=parseInt(document.getElementById('fontSelect').value)||14; applyFontSize(n); try{ localStorage.setItem('cppbox_font',n); }catch(e){} }
-function onThemeChange(){ const id=document.getElementById('themeSelect').value; applyTheme(id); try{ localStorage.setItem('cppbox_theme',id); }catch(e){} }
+function onFontChange(){ const n=parseInt(document.getElementById('fontSelect').value)||14; applyFontSize(n); persistSettings(); }
+function buildIndentSelect(){
+  const sel=document.getElementById('indentSelect');
+  for(const n of INDENTS){ sel.appendChild(new Option(n+' sp', n)); }
+  sel.value=2;
+  applyIndent(2);
+}
+function applyIndent(n){ editor.setOption('indentUnit',n); editor.setOption('tabSize',n); }
+function onIndentChange(){ const n=parseInt(document.getElementById('indentSelect').value)||2; applyIndent(n); persistSettings(); }
+
+// ── Settings: persisted by the backend in ~/.cppbox/cppbox.yaml ─────────
+async function loadSettings(){
+  try{
+    const s=await api('GET','/api/settings');
+    if(THEMES[s.theme]){ document.getElementById('themeSelect').value=s.theme; applyTheme(s.theme); }
+    if(FONT_SIZES.includes(s.font_size)){ document.getElementById('fontSelect').value=s.font_size; applyFontSize(s.font_size); }
+    if(INDENTS.includes(s.indent)){ document.getElementById('indentSelect').value=s.indent; applyIndent(s.indent); }
+    const stdSel=document.getElementById('stdSelect');
+    if([...stdSel.options].some(o=>o.value===s.std)){ stdSel.value=s.std; applyStd(s.std); }
+  }catch(e){}
+}
+function persistSettings(){
+  api('PUT','/api/settings',{
+    theme:document.getElementById('themeSelect').value,
+    font_size:parseInt(document.getElementById('fontSelect').value)||14,
+    indent:parseInt(document.getElementById('indentSelect').value)||2,
+    std:document.getElementById('stdSelect').value,
+  }).catch(()=>{});
+}
+function onThemeChange(){ const id=document.getElementById('themeSelect').value; applyTheme(id); persistSettings(); }
 
 // ── Run ──────────────────────────────────────────────────────────────────
 async function runCode(){
@@ -719,7 +776,10 @@ async function runCode(){
 }
 
 // ── Format ───────────────────────────────────────────────────────────────
+function isCppFile(p){ return /\.(cpp|cc|cxx|h|hpp|hh|hxx)$/i.test(p||''); }
+function activeFilePath(){ return (activeIdx>=0&&openTabs[activeIdx])?openTabs[activeIdx].path:''; }
 async function formatCode(){
+  if(!isCppFile(activeFilePath())){ setStatus('Format applies to .cpp/.h/.hpp files only'); return; }
   const code=editor.getValue(); if(!code.trim())return;
   const b=document.getElementById('formatBtn'); b.disabled=true; b.innerHTML='<span class="spinner"></span>';
   try{
@@ -729,7 +789,7 @@ async function formatCode(){
   }catch(e){setStatus('Format error');}
   finally{ b.disabled=false; b.innerHTML='🎨 Format'; }
 }
-function saveAndFormat(){ saveActiveFile(); setTimeout(formatCode,250); }
+function saveAndFormat(){ saveActiveFile(); if(isCppFile(activeFilePath())) setTimeout(formatCode,250); }
 
 // ── Lint ──────────────────────────────────────────────────────────────────
 function diagToAnns(d){
@@ -947,10 +1007,11 @@ function renderAdminRight(){
       <div class="admin-label">Assignments</div>
       ${d.assignment_list.length ? d.assignment_list.map(a=>`
         <div class="asg-card">
-          <div class="top"><span class="nm">${esc(a.name)}</span><span class="asg">slot ${a.slot}</span></div>
+          <div class="top"><span class="nm">${esc(a.name)}</span><span class="asg">slot ${a.slot}</span>${a.expires_ms?`<span class="asg" title="Submission deadline">⏰ ${new Date(a.expires_ms).toLocaleString()}</span>`:''}</div>
           <div class="row">
             <input class="admin-input" id="root_${a.id}" placeholder="Root folder path (e.g. /home/you/Asgn1)" value="${esc(a.root_folder||'')}" style="flex:1">
-            <button class="mini" onclick="setAsgRoot('${a.id}')">Set root</button>
+            <input class="admin-input" id="exp_${a.id}" type="datetime-local" value="${msToDTLocal(a.expires_ms)}" title="Submission deadline — later submissions stay in the queue but are not pulled (empty = no expiry)" style="width:220px">
+            <button class="mini" onclick="saveAsgSettings('${a.id}')">Save</button>
           </div>
           <div class="row">
             <input class="admin-input" id="zips_${a.id}" placeholder="Collected zips folder" style="flex:1">
@@ -1044,12 +1105,19 @@ let markerState={pid:null,files:[],active:null,codeMirror:null,acIndex:-1};
 let gridState={aid:null,data:null};
 
 function _asgById(aid){ return (adminDetail&&adminDetail.assignment_list||[]).find(a=>a.id===aid); }
-async function setAsgRoot(aid){
-  const v=document.getElementById('root_'+aid).value.trim();
-  try{ await api('PUT',`/api/admin/assignments/${aid}/root`,{root_folder:v});
-    if(adminDetail){ const a=_asgById(aid); if(a)a.root_folder=v; }
-    setStatus('Root folder saved');
+async function saveAsgSettings(aid){
+  const root=document.getElementById('root_'+aid).value.trim();
+  const dv=document.getElementById('exp_'+aid).value;
+  const ms=dv?new Date(dv).getTime():null;
+  try{ const r=await api('PUT',`/api/admin/assignments/${aid}`,{root_folder:root,expires_ms:ms});
+    if(adminDetail){ const a=_asgById(aid); if(a){ a.root_folder=r.root_folder; a.expires_ms=r.expires_ms; renderAdminRight(); } }
+    setStatus('Assignment settings saved');
   }catch(e){ flashErr(e); }
+}
+function msToDTLocal(ms){
+  if(!ms) return '';
+  const d=new Date(ms), p=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 async function organizeAsg(aid){
   const z=document.getElementById('zips_'+aid).value.trim();
@@ -1065,8 +1133,8 @@ async function pullAsg(aid){
   res.textContent='Pulling…';
   try{ const r=await api('POST',`/api/admin/assignments/${aid}/pull`,{});
     if(r.error){ res.textContent='⚠ '+r.error; return; }
-    res.textContent=`Pulled ${r.pulled} submission(s)`+(r.errors.length?` · ${r.errors.length} error(s)`:'');
-    setStatus(`Pulled ${r.pulled} submission(s); click Organize to unpack`);
+    res.textContent=`Pulled ${r.pulled} submission(s)`+(r.skipped_late?` · ${r.skipped_late} late (kept in queue)`:'')+(r.errors.length?` · ${r.errors.length} error(s)`:'');
+    setStatus(`Pulled ${r.pulled} submission(s)`+(r.skipped_late?`; ${r.skipped_late} late submission(s) left in the queue past the deadline`:'')+'; click Organize to unpack');
   }catch(e){ res.textContent=''; flashErr(e); }
 }
 async function openWorkspaceForAsg(aid){
@@ -1348,7 +1416,9 @@ window.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='f')e.
 // ── Init ─────────────────────────────────────────────────────────────────
 buildThemeSelect();
 buildFontSelect();
+buildIndentSelect();
 lspConnect();
+loadSettings();
 loadProjects().catch(e=>flashErr(new Error('Backend unreachable or stale (no /api/projects). Restart uvicorn to load new backend: '+e.message)));
 loadTrash().catch(()=>{});
 renderTrash();

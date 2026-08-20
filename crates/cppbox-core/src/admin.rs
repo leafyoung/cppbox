@@ -24,7 +24,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/admin/classes/{cid}/keys", get(list_class_keys))
         .route("/api/admin/assignments/{aid}/pull", post(pull_submissions))
         .route("/api/admin/assignments/{aid}/organize", post(organize))
-        .route("/api/admin/assignments/{aid}/root", put(set_root))
+        .route("/api/admin/assignments/{aid}", put(update_assignment))
         .route("/api/admin/assignments/{aid}/grid", get(grid))
         .route("/api/admin/projects/{pid}/feedback", get(get_feedback).post(save_feedback))
         .route("/api/workspace/open", post(open_workspace))
@@ -38,11 +38,11 @@ pub fn routes() -> Router<AppState> {
 // ── request bodies ───────────────────────────────────────────────────────
 #[derive(Deserialize)] struct ClassCreate { name: String, course: String, cohort: String }
 #[derive(Deserialize)] struct StudentImport { text: String }
-#[derive(Deserialize)] struct AssignmentCreate { name: String, slot: i64, root_folder: Option<String> }
+#[derive(Deserialize)] struct AssignmentCreate { name: String, slot: i64, root_folder: Option<String>, expires_ms: Option<i64> }
 #[derive(Deserialize)] struct OrganizeRequest { zips_folder: String }
 #[derive(Deserialize)] struct WorkspaceOpen { root_folder: String, assignment_id: Option<String> }
 #[derive(Deserialize)] struct FeedbackUpdate { text: String, score: Option<String>, #[serde(default)] publish: bool }
-#[derive(Deserialize)] struct AssignmentRootUpdate { root_folder: String }
+#[derive(Deserialize)] struct AssignmentRootUpdate { root_folder: String, expires_ms: Option<i64> }
 #[derive(Deserialize)] struct WorkerSettings { worker_url: Option<String>, worker_secret: Option<String> }
 #[derive(Deserialize)] struct KeyCreate { student_name: String, course: String, cohort: String, slot: i64 }
 #[derive(Deserialize)] struct SubmitRequest { key: String, project_id: String }
@@ -173,7 +173,7 @@ async fn get_class(State(st): State<AppState>, Path(cid): Path<String>) -> Resul
         "id": s.id, "serial": s.serial, "name": s.name, "email": s.email
     })).collect();
     let assignment_list: Vec<Value> = assignments.iter().map(|a| json!({
-        "id": a.id, "name": a.name, "slot": a.slot, "root_folder": a.root_folder
+        "id": a.id, "name": a.name, "slot": a.slot, "root_folder": a.root_folder, "expires_ms": a.expires_ms
     })).collect();
     let mut meta = class_meta(&c, student_list.len() as i64, assignment_list.len() as i64);
     meta.as_object_mut().unwrap().insert("student_list".into(), json!(student_list));
@@ -231,8 +231,8 @@ async fn create_assignment(State(st): State<AppState>, Path(cid): Path<String>, 
         .fetch_optional(&st.db).await.map_err(db_err)?
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Class not found".into()))?;
     let aid = uuid();
-    sqlx::query("INSERT INTO assignments(id,class_id,name,slot,root_folder,created_at) VALUES (?,?,?,?,?,?)")
-        .bind(&aid).bind(&cid).bind(&req.name).bind(req.slot).bind(&req.root_folder).bind(now())
+    sqlx::query("INSERT INTO assignments(id,class_id,name,slot,root_folder,expires_ms,created_at) VALUES (?,?,?,?,?,?,?)")
+        .bind(&aid).bind(&cid).bind(&req.name).bind(req.slot).bind(&req.root_folder).bind(req.expires_ms).bind(now())
         .execute(&st.db).await.map_err(db_err)?;
     // mint a 256-bit key for every student
     let students = sqlx::query_as::<_, Student>("SELECT * FROM students WHERE class_id = ?").bind(&cid)
@@ -280,13 +280,16 @@ async fn list_class_keys(State(st): State<AppState>, Path(cid): Path<String>) ->
 
 // ── pull / organize / root / grid / feedback ─────────────────────────────
 async fn pull_submissions(State(st): State<AppState>, Path(aid): Path<String>) -> Result<Json<Value>, ApiError> {
-    let exists = sqlx::query_as::<_, Assignment>("SELECT * FROM assignments WHERE id = ?").bind(&aid)
+    let a = sqlx::query_as::<_, Assignment>("SELECT * FROM assignments WHERE id = ?").bind(&aid)
         .fetch_optional(&st.db).await.map_err(db_err)?
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Assignment not found".into()))?;
-    let _ = exists;
+    // only this assignment's keys; deadline filters by the Worker's receive timestamp
+    let keys: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT key FROM submission_keys WHERE assignment_id = ?").bind(&aid)
+        .fetch_all(&st.db).await.map_err(db_err)?.into_iter().collect();
     let (wurl, wsecret) = worker_creds(&st.db).await;
     let dest = st.root.join("submissions");
-    Ok(Json(remote::pull_submissions(wurl.as_deref(), wsecret.as_deref(), &dest).await))
+    Ok(Json(remote::pull_submissions(wurl.as_deref(), wsecret.as_deref(), &dest, &keys, a.expires_ms).await))
 }
 
 async fn organize(State(st): State<AppState>, Path(aid): Path<String>, Json(req): Json<OrganizeRequest>) -> Result<Json<Value>, ApiError> {
@@ -312,16 +315,19 @@ async fn organize(State(st): State<AppState>, Path(aid): Path<String>, Json(req)
         a.root_folder.as_deref().unwrap_or(""), &req.zips_folder, &key_lookup)))
 }
 
-async fn set_root(State(st): State<AppState>, Path(aid): Path<String>, Json(req): Json<AssignmentRootUpdate>) -> Result<Json<Value>, ApiError> {
+async fn update_assignment(State(st): State<AppState>, Path(aid): Path<String>, Json(req): Json<AssignmentRootUpdate>) -> Result<Json<Value>, ApiError> {
     let a = sqlx::query_as::<_, Assignment>("SELECT * FROM assignments WHERE id = ?").bind(&aid)
         .fetch_optional(&st.db).await.map_err(db_err)?
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Assignment not found".into()))?;
     let _ = a;
-    let val = req.root_folder.trim();
-    let bound: Option<&str> = if val.is_empty() { None } else { Some(val) };
-    sqlx::query("UPDATE assignments SET root_folder = ? WHERE id = ?").bind(bound).bind(&aid)
+    let root: Option<&str> = match req.root_folder.trim() {
+        "" => None,
+        v => Some(v),
+    };
+    sqlx::query("UPDATE assignments SET root_folder = ?, expires_ms = ? WHERE id = ?")
+        .bind(root).bind(req.expires_ms).bind(&aid)
         .execute(&st.db).await.map_err(db_err)?;
-    Ok(Json(json!({ "ok": true, "root_folder": bound })))
+    Ok(Json(json!({ "ok": true, "root_folder": root, "expires_ms": req.expires_ms })))
 }
 
 async fn open_workspace(State(st): State<AppState>, Json(req): Json<WorkspaceOpen>) -> Result<Json<Value>, ApiError> {

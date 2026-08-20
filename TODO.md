@@ -15,3 +15,24 @@ Items deliberately skipped for now. Add when the requirement becomes concrete.
 - **C++23 keyword set == C++20**: C++23 adds no new core keywords beyond C++20, so highlighting is identical for 20/23. Accurate, not a gap.
 - **SSH/Remote-SSH bootstrap**: host exposes SSH (ap308:22); the user configures their VS Code Remote-SSH host entry. No auto keygen/config write yet.
 - **Theme coverage**: CM editor + app CSS variables are themed per scheme; not every pixel (e.g. modal accents) is tuned. Expand when a scheme looks off.
+
+Before first release
+
+1.  bunx @tauri-apps/cli signer generate → paste pubkey into tauri.conf.json, private key → TAURI_PRIVATE_KEY secret.
+2.  (optional) Apple/Windows signing secrets for silent installs.
+3.  git tag v0.1.0 && git push origin v0.1.0 → CI builds everything + pushes cppbox-sandbox to ghcr.
+
+```bash
+bunx @tauri-apps/cli signer generate -w cppbox.key
+gh secret set TAURI_PRIVATE_KEY --repo leafyoung/cppbox < cppbox.key
+gh secret set TAURI_KEY_PASSWORD --repo leafyoung/cppbox < cppbox.key_password
+
+```
+
+Remaining optional polish (not blocking)
+
+- Retire backend/ + pyproject.toml once you've run the Rust build on your desktop.
+- Generate a real icon set (cargo tauri icon <png>) to replace the placeholder.
+- A PR-time ci.yml for per-commit cargo build --workspace (currently release-only).
+
+Want me to tackle any of those, or pause here for you to run the desktop build locally?

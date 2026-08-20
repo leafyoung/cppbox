@@ -5,6 +5,7 @@ pub mod lsp;
 pub mod remote;
 pub mod routes;
 pub mod sandbox;
+pub mod settings;
 pub mod storage;
 
 use std::path::PathBuf;

@@ -51,6 +51,7 @@ if not s:
 ```
 
 Extract into one of:
+
 - A `_get_project(pid, db)` async helper that returns the `Snippet` or raises 404.
 - A FastAPI `Depends` that does the lookup and injects the `Snippet` object.
 
@@ -59,17 +60,23 @@ This eliminates ~40 lines of identical noise and makes the endpoints readable at
 ### 7. Fix `run_project` stdin — query-param vs body mismatch
 
 `main.py`:
+
 ```python
 async def run_project(pid: str, stdin: str = "", db: AsyncSession = Depends(get_db)):
 ```
+
 `stdin` is a plain string with default → FastAPI treats it as a **query parameter**, not a body field. But the frontend sends it in the POST body:
+
 ```javascript
-await api('POST',`/api/projects/${project.id}/run`,{stdin})
+await api("POST", `/api/projects/${project.id}/run`, { stdin });
 ```
+
 The body `{stdin}` is **silently ignored** — `stdin` is always `""`. Fix: use a Pydantic model (e.g. `class RunProjectRequest(BaseModel): stdin: str = ""`) or annotate with `Body()`:
+
 ```python
 async def run_project(pid: str, body: RunProjectRequest, db: ...):
 ```
+
 This is a real bug: stdin input from the web UI never reaches the compiled program.
 
 ---
@@ -101,6 +108,7 @@ The sandbox spins up Docker containers, runs clang, and pipes output — all wit
 ```python
 from backend.storage import clangd_config_text
 ```
+
 is imported at runtime inside `_do_sync`. This is to avoid a circular import. A cleaner fix: move `clangd_config_text` into a separate tiny module (e.g. `backend/config.py`) that both `storage.py` and `lsp.py` can import at top-level without circularity.
 
 ### 14. `main.py`: `_detect_ips` misplaced between routes
@@ -130,6 +138,7 @@ The title input's `onchange="onTitleChange()"` calls an `async function` whose r
 ### 19. `TODO.md` and instruction files
 
 The project has `TODO.md` with deferred items (accurate). No `AGENTS.md` or `CLAUDE.md` exists — the project could benefit from one briefly describing:
+
 - Where files live (projects/<uuid>/)
 - How compile works (Docker sandbox)
 - How lint works (clangd LSP diagnostics, fallback to host `-fsyntax-only`)
