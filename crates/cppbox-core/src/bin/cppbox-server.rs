@@ -21,7 +21,13 @@ async fn main() -> anyhow::Result<()> {
     let frontend = std::env::var("CPPBOX_FRONTEND")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| root.join("frontend"));
-    let app = build_app(AppState { db: pool, root: root.clone() }, frontend);
+    let app = build_app(
+        AppState {
+            db: pool,
+            root: root.clone(),
+        },
+        frontend,
+    );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
@@ -51,12 +57,16 @@ fn open_browser(url: &str) {
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(url).spawn();
     #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
+    let _ = std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .spawn();
 }
 
 async fn shutdown_signal() {
     let ctrl_c = async {
-        tokio::signal::ctrl_c().await.expect("install ctrl-c handler");
+        tokio::signal::ctrl_c()
+            .await
+            .expect("install ctrl-c handler");
     };
     #[cfg(unix)]
     let terminate = async {

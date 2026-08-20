@@ -101,12 +101,16 @@ pub async fn migrate(db: &SqlitePool) -> anyhow::Result<()> {
             id TEXT PRIMARY KEY, title TEXT, local_path TEXT, code TEXT, language TEXT,
             created_at TEXT, updated_at TEXT, version INTEGER, cpp_standard TEXT, deleted_at TEXT
         )",
-    ).execute(db).await?;
+    )
+    .execute(db)
+    .await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS classes (
             id TEXT PRIMARY KEY, name TEXT, course TEXT, cohort TEXT, created_at TEXT
         )",
-    ).execute(db).await?;
+    )
+    .execute(db)
+    .await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS students (
             id TEXT PRIMARY KEY, class_id TEXT, serial INTEGER, name TEXT, email TEXT, created_at TEXT
@@ -122,32 +126,44 @@ pub async fn migrate(db: &SqlitePool) -> anyhow::Result<()> {
             key TEXT PRIMARY KEY, student_name TEXT, course TEXT, cohort TEXT, slot INTEGER,
             class_id TEXT, student_id TEXT, assignment_id TEXT, created_at TEXT
         )",
-    ).execute(db).await?;
+    )
+    .execute(db)
+    .await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS submissions (
             id TEXT PRIMARY KEY, key TEXT, counter INTEGER, project_id TEXT, project_title TEXT,
             zip_path TEXT, commit_hash TEXT, submitted_at TEXT
         )",
-    ).execute(db).await?;
+    )
+    .execute(db)
+    .await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS markings (
             id TEXT PRIMARY KEY, assignment_id TEXT, student_id TEXT, project_id TEXT,
             graded INTEGER, graded_at TEXT, score TEXT, feedback_file TEXT, updated_at TEXT,
             UNIQUE (assignment_id, student_id)
         )",
-    ).execute(db).await?;
+    )
+    .execute(db)
+    .await?;
     sqlx::query("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
         .execute(db)
         .await?;
     // migration for pre-existing DBs
-    let _ = sqlx::query("ALTER TABLE assignments ADD COLUMN expires_ms INTEGER").execute(db).await;
-    let _ = sqlx::query("ALTER TABLE assignments ADD COLUMN late_policy TEXT").execute(db).await;
+    let _ = sqlx::query("ALTER TABLE assignments ADD COLUMN expires_ms INTEGER")
+        .execute(db)
+        .await;
+    let _ = sqlx::query("ALTER TABLE assignments ADD COLUMN late_policy TEXT")
+        .execute(db)
+        .await;
     Ok(())
 }
 
 /// Open (creating if missing) the SQLite DB at `path`.
 pub async fn connect(path: &std::path::Path) -> anyhow::Result<SqlitePool> {
-    let opts = SqliteConnectOptions::new().filename(path).create_if_missing(true);
+    let opts = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .connect_with(opts)
         .await?;

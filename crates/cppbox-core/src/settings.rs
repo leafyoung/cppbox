@@ -14,10 +14,18 @@ pub struct SettingsFile {
     pub std: String,
 }
 
-fn default_theme() -> String { "material-ocean".into() }
-fn default_font_size() -> u32 { 14 }
-fn default_indent() -> u32 { 2 }
-fn default_std() -> String { "c++17".into() }
+fn default_theme() -> String {
+    "material-ocean".into()
+}
+fn default_font_size() -> u32 {
+    14
+}
+fn default_indent() -> u32 {
+    2
+}
+fn default_std() -> String {
+    "c++17".into()
+}
 
 impl Default for SettingsFile {
     fn default() -> Self {

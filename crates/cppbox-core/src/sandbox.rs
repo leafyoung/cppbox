@@ -13,7 +13,11 @@ pub fn sandbox_image() -> String {
 }
 
 /// Compile with debug symbols (-g -O0) for gdb. Returns (binary, job_dir).
-pub async fn compile_debug(root: &Path, files: &[File], std: &str) -> Result<(PathBuf, PathBuf), String> {
+pub async fn compile_debug(
+    root: &Path,
+    files: &[File],
+    std: &str,
+) -> Result<(PathBuf, PathBuf), String> {
     let dir = job_dir(root);
     write_sources(&dir, files);
     let sources = source_list(files);
@@ -24,13 +28,28 @@ pub async fn compile_debug(root: &Path, files: &[File], std: &str) -> Result<(Pa
     );
     let abs = dir.canonicalize().map_err(|e| e.to_string())?;
     let mut c = Command::new(runtime());
-    c.args(["run", "--rm", "--network", "none", "--memory", "512m", "--cpus", "2",
-            "--pids-limit", "50", "--read-only", "--security-opt", "label=disable"])
-        .arg("-v").arg(format!("{}:/home/sandbox/work:rw", abs.display()))
-        .args(["-w", "/home/sandbox/work"])
-        .arg(sandbox_image())
-        .args(["sh", "-c", &cmd_str])
-        .stdout(Stdio::piped()).stderr(Stdio::piped());
+    c.args([
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--memory",
+        "512m",
+        "--cpus",
+        "2",
+        "--pids-limit",
+        "50",
+        "--read-only",
+        "--security-opt",
+        "label=disable",
+    ])
+    .arg("-v")
+    .arg(format!("{}:/home/sandbox/work:rw", abs.display()))
+    .args(["-w", "/home/sandbox/work"])
+    .arg(sandbox_image())
+    .args(["sh", "-c", &cmd_str])
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
     let out = match tokio::time::timeout(Duration::from_secs(60), c.output()).await {
         Ok(Ok(o)) => o,
         Ok(Err(e)) => return Err(format!("compile error: {e}")),
@@ -42,33 +61,65 @@ pub async fn compile_debug(root: &Path, files: &[File], std: &str) -> Result<(Pa
     if out.status.success() && binary.exists() {
         Ok((binary, dir))
     } else {
-        Err(if text.trim().is_empty() { "Compilation failed".into() } else { text })
+        Err(if text.trim().is_empty() {
+            "Compilation failed".into()
+        } else {
+            text
+        })
     }
 }
 
 /// Build with make (incremental) then run ./app. Ensures a Makefile exists.
-pub async fn make_and_run(root: &Path, pid: &str, local_path: Option<&str>, stdin: &str, std: &str) -> Value {
+pub async fn make_and_run(
+    root: &Path,
+    pid: &str,
+    local_path: Option<&str>,
+    stdin: &str,
+    std: &str,
+) -> Value {
     let dir = crate::storage::project_root(root, pid, local_path);
     if !dir.join("Makefile").exists() {
         crate::storage::write_makefile(root, pid, local_path, std);
     }
     let abs = match dir.canonicalize() {
         Ok(a) => a,
-        Err(e) => return json!({ "ok": false, "stage": "compile", "compile_output": format!("project dir error: {e}"), "run_output": "" }),
+        Err(e) => {
+            return json!({ "ok": false, "stage": "compile", "compile_output": format!("project dir error: {e}"), "run_output": "" })
+        }
     };
     // 1) make (rebuilds only when sources changed)
     let mut c = Command::new(runtime());
-    c.args(["run", "--rm", "--user", "0", "--network", "none", "--memory", "512m", "--cpus", "2",
-            "--pids-limit", "50", "--security-opt", "label=disable"])
-        .arg("-v").arg(format!("{}:/home/sandbox/work:rw", abs.display()))
-        .args(["-w", "/home/sandbox/work"])
-        .arg(sandbox_image())
-        .args(["sh", "-c", "make 2>&1"])
-        .stdout(Stdio::piped()).stderr(Stdio::piped());
+    c.args([
+        "run",
+        "--rm",
+        "--user",
+        "0",
+        "--network",
+        "none",
+        "--memory",
+        "512m",
+        "--cpus",
+        "2",
+        "--pids-limit",
+        "50",
+        "--security-opt",
+        "label=disable",
+    ])
+    .arg("-v")
+    .arg(format!("{}:/home/sandbox/work:rw", abs.display()))
+    .args(["-w", "/home/sandbox/work"])
+    .arg(sandbox_image())
+    .args(["sh", "-c", "make 2>&1"])
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
     let out = match tokio::time::timeout(Duration::from_secs(60), c.output()).await {
         Ok(Ok(o)) => o,
-        Ok(Err(e)) => return json!({ "ok": false, "stage": "compile", "compile_output": format!("make error: {e}"), "run_output": "" }),
-        Err(_) => return json!({ "ok": false, "stage": "compile", "compile_output": "Build timed out (60s)", "run_output": "" }),
+        Ok(Err(e)) => {
+            return json!({ "ok": false, "stage": "compile", "compile_output": format!("make error: {e}"), "run_output": "" })
+        }
+        Err(_) => {
+            return json!({ "ok": false, "stage": "compile", "compile_output": "Build timed out (60s)", "run_output": "" })
+        }
     };
     let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&out.stderr));
@@ -77,17 +128,39 @@ pub async fn make_and_run(root: &Path, pid: &str, local_path: Option<&str>, stdi
     }
     // 2) run the built executable
     let mut r = Command::new(runtime());
-    r.args(["run", "--rm", "-i", "--network", "none", "--memory", "256m", "--cpus", "1",
-            "--pids-limit", "30", "--read-only", "--security-opt", "label=disable",
-            "--cap-drop", "ALL", "--security-opt", "no-new-privileges"])
-        .arg("-v").arg(format!("{}:/home/sandbox/work:ro", abs.display()))
-        .args(["-w", "/home/sandbox/work"])
-        .arg(sandbox_image())
-        .args(["sh", "-c", "timeout 15 ./app 2>&1"])
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    r.args([
+        "run",
+        "--rm",
+        "-i",
+        "--network",
+        "none",
+        "--memory",
+        "256m",
+        "--cpus",
+        "1",
+        "--pids-limit",
+        "30",
+        "--read-only",
+        "--security-opt",
+        "label=disable",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+    ])
+    .arg("-v")
+    .arg(format!("{}:/home/sandbox/work:ro", abs.display()))
+    .args(["-w", "/home/sandbox/work"])
+    .arg(sandbox_image())
+    .args(["sh", "-c", "timeout 15 ./app 2>&1"])
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
     let mut child = match r.spawn() {
         Ok(ch) => ch,
-        Err(e) => return json!({ "ok": false, "stage": "run", "compile_output": text, "run_output": format!("run error: {e}") }),
+        Err(e) => {
+            return json!({ "ok": false, "stage": "run", "compile_output": text, "run_output": format!("run error: {e}") })
+        }
     };
     if let Some(mut sin) = child.stdin.take() {
         use tokio::io::AsyncWriteExt;
@@ -100,8 +173,12 @@ pub async fn make_and_run(root: &Path, pid: &str, local_path: Option<&str>, stdi
             let code = o.status.code().unwrap_or(-1);
             json!({ "ok": code == 0, "stage": "run", "compile_output": text, "run_output": rtext, "exit_code": code, "timed_out": code == 124 })
         }
-        Ok(Err(e)) => json!({ "ok": false, "stage": "run", "compile_output": text, "run_output": format!("run error: {e}") }),
-        Err(_) => json!({ "ok": false, "stage": "run", "compile_output": text, "run_output": "Execution timed out.", "timed_out": true }),
+        Ok(Err(e)) => {
+            json!({ "ok": false, "stage": "run", "compile_output": text, "run_output": format!("run error: {e}") })
+        }
+        Err(_) => {
+            json!({ "ok": false, "stage": "run", "compile_output": text, "run_output": "Execution timed out.", "timed_out": true })
+        }
     }
 }
 
@@ -194,7 +271,10 @@ fn include_flags(files: &[File]) -> String {
             p = pp.parent().map(|x| x.to_path_buf());
         }
     }
-    dirs.iter().map(|d| format!("-I{}", d)).collect::<Vec<_>>().join(" ")
+    dirs.iter()
+        .map(|d| format!("-I{}", d))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 async fn compile_files(root: &Path, files: &[File], std: &str) -> CompileResult {
@@ -204,61 +284,145 @@ async fn compile_files(root: &Path, files: &[File], std: &str) -> CompileResult 
     let inc = include_flags(files);
     let cmd_str = format!(
         "clang++ -std={} -O2 -Wall -Wextra -pedantic -fcolor-diagnostics {} {} -o a.out 2>&1",
-        std, inc, sources.join(" ")
+        std,
+        inc,
+        sources.join(" ")
     );
     let abs = match dir.canonicalize() {
         Ok(a) => a,
-        Err(e) => return CompileResult { success: false, output: format!("job dir error: {e}"), binary: None },
+        Err(e) => {
+            return CompileResult {
+                success: false,
+                output: format!("job dir error: {e}"),
+                binary: None,
+            }
+        }
     };
 
     let mut c = Command::new(runtime());
-    c.args(["run", "--rm", "--network", "none", "--memory", "512m", "--cpus", "2",
-            "--pids-limit", "50", "--read-only", "--security-opt", "label=disable"])
-        .arg("-v").arg(format!("{}:/home/sandbox/work:rw", abs.display()))
-        .args(["-w", "/home/sandbox/work"])
-        .arg(sandbox_image())
-        .args(["sh", "-c", &cmd_str])
-        .stdout(Stdio::piped()).stderr(Stdio::piped());
+    c.args([
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--memory",
+        "512m",
+        "--cpus",
+        "2",
+        "--pids-limit",
+        "50",
+        "--read-only",
+        "--security-opt",
+        "label=disable",
+    ])
+    .arg("-v")
+    .arg(format!("{}:/home/sandbox/work:rw", abs.display()))
+    .args(["-w", "/home/sandbox/work"])
+    .arg(sandbox_image())
+    .args(["sh", "-c", &cmd_str])
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
 
     let output = match tokio::time::timeout(Duration::from_secs(60), c.output()).await {
         Ok(Ok(o)) => o,
-        Ok(Err(e)) => return CompileResult { success: false, output: format!("Compilation error: {e}"), binary: None },
-        Err(_) => return CompileResult { success: false, output: "Compilation timed out (60s)".into(), binary: None },
+        Ok(Err(e)) => {
+            return CompileResult {
+                success: false,
+                output: format!("Compilation error: {e}"),
+                binary: None,
+            }
+        }
+        Err(_) => {
+            return CompileResult {
+                success: false,
+                output: "Compilation timed out (60s)".into(),
+                binary: None,
+            }
+        }
     };
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
     let binary = dir.join("a.out");
     let success = output.status.success() && binary.exists();
     let binary_path = if success { Some(binary) } else { None };
-    let output_text = if text.trim().is_empty() { "Compilation failed (no output)".into() } else { text };
-    CompileResult { success, output: output_text, binary: binary_path }
+    let output_text = if text.trim().is_empty() {
+        "Compilation failed (no output)".into()
+    } else {
+        text
+    };
+    CompileResult {
+        success,
+        output: output_text,
+        binary: binary_path,
+    }
 }
 
 async fn run_binary(binary: &Path, stdin: &str, timeout: u64) -> RunResult {
     let dir = match binary.parent() {
         Some(d) => d.to_path_buf(),
-        None => return RunResult { output: "invalid binary path".into(), exit_code: -1, timed_out: false },
+        None => {
+            return RunResult {
+                output: "invalid binary path".into(),
+                exit_code: -1,
+                timed_out: false,
+            }
+        }
     };
-    let name = binary.file_name().and_then(|n| n.to_str()).unwrap_or("a.out");
+    let name = binary
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("a.out");
     let abs = match dir.canonicalize() {
         Ok(a) => a,
-        Err(e) => return RunResult { output: format!("Execution error: {e}"), exit_code: -1, timed_out: false },
+        Err(e) => {
+            return RunResult {
+                output: format!("Execution error: {e}"),
+                exit_code: -1,
+                timed_out: false,
+            }
+        }
     };
     let cmd_str = format!("timeout {timeout} ./{name} 2>&1");
 
     let mut c = Command::new(runtime());
-    c.args(["run", "--rm", "-i", "--network", "none", "--memory", "256m", "--cpus", "1",
-            "--pids-limit", "30", "--read-only", "--security-opt", "label=disable",
-            "--cap-drop", "ALL", "--security-opt", "no-new-privileges"])
-        .arg("-v").arg(format!("{}:/home/sandbox/work:ro", abs.display()))
-        .args(["-w", "/home/sandbox/work"])
-        .arg(sandbox_image())
-        .args(["sh", "-c", &cmd_str])
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    c.args([
+        "run",
+        "--rm",
+        "-i",
+        "--network",
+        "none",
+        "--memory",
+        "256m",
+        "--cpus",
+        "1",
+        "--pids-limit",
+        "30",
+        "--read-only",
+        "--security-opt",
+        "label=disable",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+    ])
+    .arg("-v")
+    .arg(format!("{}:/home/sandbox/work:ro", abs.display()))
+    .args(["-w", "/home/sandbox/work"])
+    .arg(sandbox_image())
+    .args(["sh", "-c", &cmd_str])
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
 
     let mut child = match c.spawn() {
         Ok(ch) => ch,
-        Err(e) => return RunResult { output: format!("Execution error: {e}"), exit_code: -1, timed_out: false },
+        Err(e) => {
+            return RunResult {
+                output: format!("Execution error: {e}"),
+                exit_code: -1,
+                timed_out: false,
+            }
+        }
     };
     if let Some(mut sin) = child.stdin.take() {
         use tokio::io::AsyncWriteExt;
@@ -271,10 +435,22 @@ async fn run_binary(binary: &Path, stdin: &str, timeout: u64) -> RunResult {
             text.push_str(&String::from_utf8_lossy(&o.stderr));
             let code = o.status.code().unwrap_or(-1);
             let timed_out = code == 124;
-            RunResult { output: text, exit_code: code, timed_out }
+            RunResult {
+                output: text,
+                exit_code: code,
+                timed_out,
+            }
         }
-        Ok(Err(e)) => RunResult { output: format!("Execution error: {e}"), exit_code: -1, timed_out: false },
-        Err(_) => RunResult { output: "Execution timed out.".into(), exit_code: -1, timed_out: true },
+        Ok(Err(e)) => RunResult {
+            output: format!("Execution error: {e}"),
+            exit_code: -1,
+            timed_out: false,
+        },
+        Err(_) => RunResult {
+            output: "Execution timed out.".into(),
+            exit_code: -1,
+            timed_out: true,
+        },
     }
 }
 
@@ -286,12 +462,18 @@ fn cleanup(dir: &Path) {
 pub async fn compile_and_run(root: &Path, files: &[File], stdin: &str, std: &str) -> Value {
     let cr = compile_files(root, files, std).await;
     if !cr.success {
-        if let Some(b) = &cr.binary { if let Some(p) = b.parent() { cleanup(p); } }
+        if let Some(b) = &cr.binary {
+            if let Some(p) = b.parent() {
+                cleanup(p);
+            }
+        }
         return json!({ "ok": false, "stage": "compile", "compile_output": cr.output, "run_output": "" });
     }
     let binary = cr.binary.clone().unwrap();
     let rr = run_binary(&binary, stdin, 15).await;
-    if let Some(p) = binary.parent() { cleanup(p); }
+    if let Some(p) = binary.parent() {
+        cleanup(p);
+    }
     json!({
         "ok": rr.exit_code == 0,
         "stage": "run",
@@ -306,7 +488,9 @@ pub async fn compile_and_run(root: &Path, files: &[File], stdin: &str, std: &str
 pub async fn format_code(code: &str, style: &str) -> String {
     let mut c = Command::new("clang-format");
     c.arg(format!("--style={style}"))
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = match c.spawn() {
         Ok(ch) => ch,
         Err(_) => return code.into(),
@@ -322,15 +506,24 @@ pub async fn format_code(code: &str, style: &str) -> String {
 }
 
 /// Host clang++ -fsyntax-only parse; returns diagnostics.
-pub async fn check_syntax(root: &Path, files: &[File], std: &str, entry: Option<&str>) -> Vec<Value> {
+pub async fn check_syntax(
+    root: &Path,
+    files: &[File],
+    std: &str,
+    entry: Option<&str>,
+) -> Vec<Value> {
     let dir = job_dir(root);
     write_sources(&dir, files);
 
     let entry = entry.map(str::to_string).unwrap_or_else(|| {
-        let cpp: Vec<_> = files.iter().filter(|f| {
-            [".cpp", ".cc", ".cxx"].iter().any(|e| f.name.ends_with(e))
-        }).collect();
-        cpp.first().map(|f| f.name.clone()).or_else(|| files.first().map(|f| f.name.clone())).unwrap_or_default()
+        let cpp: Vec<_> = files
+            .iter()
+            .filter(|f| [".cpp", ".cc", ".cxx"].iter().any(|e| f.name.ends_with(e)))
+            .collect();
+        cpp.first()
+            .map(|f| f.name.clone())
+            .or_else(|| files.first().map(|f| f.name.clone()))
+            .unwrap_or_default()
     });
     if entry.is_empty() {
         cleanup(&dir);
@@ -343,12 +536,23 @@ pub async fn check_syntax(root: &Path, files: &[File], std: &str, entry: Option<
         let mut p = Path::new(&f.name).parent().map(|x| dir.join(x));
         while let Some(pp) = p {
             let s = pp.display().to_string();
-            if !inc.contains(&s) { inc.push(s); }
+            if !inc.contains(&s) {
+                inc.push(s);
+            }
             p = pp.parent().map(|x| dir.join(x));
         }
     }
-    let mut args: Vec<String> = vec![format!("-std={std}"), "-fsyntax-only".into(), "-fno-color-diagnostics".into(), "-Wall".into(), "-Wextra".into()];
-    for d in &inc { args.push("-I".into()); args.push(d.clone()); }
+    let mut args: Vec<String> = vec![
+        format!("-std={std}"),
+        "-fsyntax-only".into(),
+        "-fno-color-diagnostics".into(),
+        "-Wall".into(),
+        "-Wextra".into(),
+    ];
+    for d in &inc {
+        args.push("-I".into());
+        args.push(d.clone());
+    }
     args.push(dir.join(&entry).display().to_string());
 
     let mut c = Command::new("clang++");
@@ -359,7 +563,10 @@ pub async fn check_syntax(root: &Path, files: &[File], std: &str, entry: Option<
             t.push_str(&String::from_utf8_lossy(&o.stderr));
             t
         }
-        _ => { cleanup(&dir); return vec![]; }
+        _ => {
+            cleanup(&dir);
+            return vec![];
+        }
     };
 
     let re = regex::Regex::new(

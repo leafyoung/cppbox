@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 
 use cppbox_core::{build_app, db, AppState};
-use tauri::{Manager, WebviewUrl};
 use tauri::WebviewWindowBuilder;
+use tauri::{Manager, WebviewUrl};
 
 fn data_root() -> PathBuf {
     if let Ok(r) = std::env::var("CPPBOX_ROOT") {
@@ -40,7 +40,9 @@ fn open_browser(url: String) {
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(&url).spawn();
     #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("cmd").args(["/C", "start", "", &url]).spawn();
+    let _ = std::process::Command::new("cmd")
+        .args(["/C", "start", "", &url])
+        .spawn();
 }
 
 struct AppHandle {
@@ -69,7 +71,13 @@ fn main() {
                     eprintln!("db migrate failed: {e}");
                     return;
                 }
-                let router = build_app(AppState { db: pool, root: data_root }, frontend);
+                let router = build_app(
+                    AppState {
+                        db: pool,
+                        root: data_root,
+                    },
+                    frontend,
+                );
                 let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
                     Ok(l) => l,
                     Err(e) => {

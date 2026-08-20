@@ -18,7 +18,11 @@ fn hdrs(secret: &str) -> reqwest::header::HeaderMap {
 /// late policy: for "reject", expires_ms is the deadline the Worker enforces;
 /// for "filter" (default), expires_ms is null so the Worker accepts everything
 /// and the pull filter does the skipping.
-pub async fn push_keys(url: Option<&str>, secret: Option<&str>, keys: &[(String, Option<i64>)]) -> Value {
+pub async fn push_keys(
+    url: Option<&str>,
+    secret: Option<&str>,
+    keys: &[(String, Option<i64>)],
+) -> Value {
     let (Some(url), Some(secret)) = (url, secret) else {
         return json!({ "skipped": true });
     };
@@ -35,7 +39,10 @@ pub async fn push_keys(url: Option<&str>, secret: Option<&str>, keys: &[(String,
         .send()
         .await
     {
-        Ok(r) => r.json::<Value>().await.unwrap_or_else(|e| json!({ "error": e.to_string() })),
+        Ok(r) => r
+            .json::<Value>()
+            .await
+            .unwrap_or_else(|e| json!({ "error": e.to_string() })),
         Err(e) => json!({ "error": e.to_string() }),
     }
 }
@@ -45,8 +52,11 @@ pub async fn push_keys(url: Option<&str>, secret: Option<&str>, keys: &[(String,
 /// to `keys` and (if `deadline_ms` is set) were submitted before the deadline.
 /// Late/foreign objects are left in R2 untouched.
 pub async fn pull_submissions(
-    url: Option<&str>, secret: Option<&str>, dest: &Path,
-    keys: &std::collections::HashSet<String>, deadline_ms: Option<i64>,
+    url: Option<&str>,
+    secret: Option<&str>,
+    dest: &Path,
+    keys: &std::collections::HashSet<String>,
+    deadline_ms: Option<i64>,
 ) -> Value {
     let (Some(url), Some(secret)) = (url, secret) else {
         return json!({ "error": "Worker not configured (set URL + secret in Admin → Remote collector)" });
@@ -55,10 +65,18 @@ pub async fn pull_submissions(
     let client = reqwest::Client::new();
 
     let objects = match client
-        .get(format!("{base}/admin/list")).headers(hdrs(secret))
-        .timeout(std::time::Duration::from_secs(20)).send().await
+        .get(format!("{base}/admin/list"))
+        .headers(hdrs(secret))
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
     {
-        Ok(r) => r.json::<Value>().await.ok().and_then(|v| v.get("objects").cloned()).unwrap_or(json!([])),
+        Ok(r) => r
+            .json::<Value>()
+            .await
+            .ok()
+            .and_then(|v| v.get("objects").cloned())
+            .unwrap_or(json!([])),
         Err(e) => return json!({ "error": format!("list failed: {e}") }),
     };
     let _ = std::fs::create_dir_all(dest);
@@ -68,27 +86,46 @@ pub async fn pull_submissions(
     let mut names: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
     for o in objects.as_array().map(|a| a.clone()).unwrap_or_default() {
-        let Some(name) = o.get("name").and_then(|n| n.as_str()).map(String::from) else { continue };
+        let Some(name) = o.get("name").and_then(|n| n.as_str()).map(String::from) else {
+            continue;
+        };
         // object name is {key}+{ms}.zip — ms is the Worker's receive timestamp
         let stem = name.strip_suffix(".zip").unwrap_or(&name);
         let (key, ms) = match stem.split_once('+') {
             Some((k, m)) => (k.to_string(), m.parse::<i64>().unwrap_or(0)),
-            None => { other += 1; continue; }
+            None => {
+                other += 1;
+                continue;
+            }
         };
-        if !keys.contains(&key) { other += 1; continue; }
+        if !keys.contains(&key) {
+            other += 1;
+            continue;
+        }
         if let Some(d) = deadline_ms {
-            if ms > d { late += 1; continue; }   // past deadline — keep in R2
+            if ms > d {
+                late += 1;
+                continue;
+            } // past deadline — keep in R2
         }
         let q = urlencode(&name);
         let get_url = format!("{base}/admin/object/{q}");
-        let res = client.get(&get_url).headers(hdrs(secret))
-            .timeout(std::time::Duration::from_secs(60)).send().await;
+        let res = client
+            .get(&get_url)
+            .headers(hdrs(secret))
+            .timeout(std::time::Duration::from_secs(60))
+            .send()
+            .await;
         match res {
             Ok(r) if r.status().is_success() => match r.bytes().await {
                 Ok(b) => {
                     let _ = std::fs::write(dest.join(&name), &b);
-                    let _ = client.delete(format!("{base}/admin/object/{q}")).headers(hdrs(secret))
-                        .timeout(std::time::Duration::from_secs(15)).send().await;
+                    let _ = client
+                        .delete(format!("{base}/admin/object/{q}"))
+                        .headers(hdrs(secret))
+                        .timeout(std::time::Duration::from_secs(15))
+                        .send()
+                        .await;
                     pulled += 1;
                     names.push(name);
                 }
@@ -102,11 +139,13 @@ pub async fn pull_submissions(
 }
 
 fn urlencode(s: &str) -> String {
-    s.bytes().map(|b| {
-        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
-            (b as char).to_string()
-        } else {
-            format!("%{:02X}", b)
-        }
-    }).collect()
+    s.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+                (b as char).to_string()
+            } else {
+                format!("%{:02X}", b)
+            }
+        })
+        .collect()
 }

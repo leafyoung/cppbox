@@ -12,7 +12,12 @@ pub fn project_root(root: &Path, id: &str, local_path: Option<&str>) -> PathBuf 
 }
 
 /// Join a relative path under a project root, rejecting traversal outside it.
-pub fn safe_join(root: &Path, id: &str, local_path: Option<&str>, rel: &str) -> Result<PathBuf, String> {
+pub fn safe_join(
+    root: &Path,
+    id: &str,
+    local_path: Option<&str>,
+    rel: &str,
+) -> Result<PathBuf, String> {
     use path_clean::PathClean;
     let base = project_root(root, id, local_path);
     // lexical normalization resolves `..` so `../escape` is caught even when the
@@ -25,7 +30,13 @@ pub fn safe_join(root: &Path, id: &str, local_path: Option<&str>, rel: &str) -> 
     Ok(target)
 }
 
-pub fn write_file(root: &Path, id: &str, local_path: Option<&str>, rel: &str, content: &str) -> Result<String, String> {
+pub fn write_file(
+    root: &Path,
+    id: &str,
+    local_path: Option<&str>,
+    rel: &str,
+    content: &str,
+) -> Result<String, String> {
     let target = safe_join(root, id, local_path, rel)?;
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -34,18 +45,33 @@ pub fn write_file(root: &Path, id: &str, local_path: Option<&str>, rel: &str, co
     Ok(rel.to_string())
 }
 
-pub fn make_dir(root: &Path, id: &str, local_path: Option<&str>, rel: &str) -> Result<String, String> {
+pub fn make_dir(
+    root: &Path,
+    id: &str,
+    local_path: Option<&str>,
+    rel: &str,
+) -> Result<String, String> {
     let target = safe_join(root, id, local_path, rel)?;
     std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
     Ok(rel.to_string())
 }
 
-pub fn read_file(root: &Path, id: &str, local_path: Option<&str>, rel: &str) -> Result<String, String> {
+pub fn read_file(
+    root: &Path,
+    id: &str,
+    local_path: Option<&str>,
+    rel: &str,
+) -> Result<String, String> {
     let target = safe_join(root, id, local_path, rel)?;
     std::fs::read_to_string(&target).map_err(|e| e.to_string())
 }
 
-pub fn delete_path(root: &Path, id: &str, local_path: Option<&str>, rel: &str) -> Result<(), String> {
+pub fn delete_path(
+    root: &Path,
+    id: &str,
+    local_path: Option<&str>,
+    rel: &str,
+) -> Result<(), String> {
     let target = safe_join(root, id, local_path, rel)?;
     if target.is_dir() {
         std::fs::remove_dir_all(&target).map_err(|e| e.to_string())
@@ -54,7 +80,13 @@ pub fn delete_path(root: &Path, id: &str, local_path: Option<&str>, rel: &str) -
     }
 }
 
-pub fn move_path(root: &Path, id: &str, local_path: Option<&str>, old: &str, new: &str) -> Result<String, String> {
+pub fn move_path(
+    root: &Path,
+    id: &str,
+    local_path: Option<&str>,
+    old: &str,
+    new: &str,
+) -> Result<String, String> {
     let from = safe_join(root, id, local_path, old)?;
     let to = safe_join(root, id, local_path, new)?;
     if let Some(parent) = to.parent() {
@@ -98,7 +130,8 @@ run: all\n\
 \t./$(BIN)\n\
 clean:\n\
 \trm -f $(BIN)\n\
-.PHONY: all run clean\n".replace("{std}", std);
+.PHONY: all run clean\n"
+        .replace("{std}", std);
     let _ = std::fs::write(d.join("Makefile"), body);
 }
 
@@ -130,12 +163,20 @@ pub fn git_init_project(root: &Path, id: &str, local_path: Option<&str>) {
         return;
     }
     let _ = std::fs::write(d.join(".gitignore"), GITIGNORE);
-    let _ = std::process::Command::new("git").arg("init").current_dir(&d)
-        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+    let _ = std::process::Command::new("git")
+        .arg("init")
+        .current_dir(&d)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
 }
 
 /// Read every source/header file for compilation. Returns (relative_name, content).
-pub fn collect_source_files(root: &Path, id: &str, local_path: Option<&str>) -> Vec<(String, String)> {
+pub fn collect_source_files(
+    root: &Path,
+    id: &str,
+    local_path: Option<&str>,
+) -> Vec<(String, String)> {
     let base = project_root(root, id, local_path);
     let mut out = Vec::new();
     if !base.exists() {
@@ -149,7 +190,9 @@ pub fn collect_source_files(root: &Path, id: &str, local_path: Option<&str>) -> 
 const SRC_EXTS: [&str; 8] = ["cpp", "cc", "cxx", "c", "h", "hpp", "hh", "hxx"];
 
 fn collect_into(base: &Path, dir: &Path, out: &mut Vec<(String, String)>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         if name.starts_with('.') || name == "__pycache__" {
@@ -187,7 +230,9 @@ pub fn build_tree(root: &Path, id: &str, local_path: Option<&str>) -> Value {
 }
 
 fn walk(base: &Path, dir: &Path) -> Vec<Value> {
-    let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return vec![];
+    };
     let mut entries: Vec<_> = rd.flatten().collect();
     entries.sort_by(|a, b| {
         let ad = a.file_type().map(|t| t.is_dir()).unwrap_or(false);
@@ -231,22 +276,33 @@ pub fn safe_name(name: &str) -> String {
         .filter(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | ' '))
         .collect();
     let out = keep.trim().replace(' ', "_");
-    if out.is_empty() { "student".into() } else { out }
+    if out.is_empty() {
+        "student".into()
+    } else {
+        out
+    }
 }
 
 const SUBMIT_EXTS: &[&str] = &[
-    "cpp", "cc", "cxx", "c", "h", "hpp", "hh", "hxx", "md", "txt", "json",
-    "yaml", "yml", "toml", "ini", "cfg", "py", "sh", "cmake", "qmd", "tex",
-    "bib", "csv", "xml", "r", "rmd", "sty", "cls", "dtx", "ins", "css", "js",
-    "ts", "svg", "html", "pdf",
+    "cpp", "cc", "cxx", "c", "h", "hpp", "hh", "hxx", "md", "txt", "json", "yaml", "yml", "toml",
+    "ini", "cfg", "py", "sh", "cmake", "qmd", "tex", "bib", "csv", "xml", "r", "rmd", "sty", "cls",
+    "dtx", "ins", "css", "js", "ts", "svg", "html", "pdf",
 ];
 const SUBMIT_NAMES: &[&str] = &[
-    "Makefile", "CMakeLists.txt", "compile_flags.txt",
-    ".clangd", ".editorconfig", ".gitignore",
+    "Makefile",
+    "CMakeLists.txt",
+    "compile_flags.txt",
+    ".clangd",
+    ".editorconfig",
+    ".gitignore",
 ];
 
 /// Collect non-executable source/doc files for a submission zip: (relpath, content).
-pub fn collect_submission_files(root: &Path, id: &str, local_path: Option<&str>) -> Vec<(String, String)> {
+pub fn collect_submission_files(
+    root: &Path,
+    id: &str,
+    local_path: Option<&str>,
+) -> Vec<(String, String)> {
     let base = project_root(root, id, local_path);
     let mut out = Vec::new();
     if !base.exists() {
@@ -258,7 +314,9 @@ pub fn collect_submission_files(root: &Path, id: &str, local_path: Option<&str>)
 }
 
 fn collect_submit_into(base: &Path, dir: &Path, out: &mut Vec<(String, String)>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         // skip dotfiles except the whitelisted ones
@@ -291,10 +349,15 @@ fn collect_submit_into(base: &Path, dir: &Path, out: &mut Vec<(String, String)>)
 /// Zip name: {key}+{counter}.zip
 pub fn create_submission_zip(
     submissions_root: &Path,
-    key: &str, counter: i64,
+    key: &str,
+    counter: i64,
     files: &[(String, String)],
-    student_name: &str, course: &str, cohort: &str, slot: i64,
-    project_title: &str, submitted_at: &str,
+    student_name: &str,
+    course: &str,
+    cohort: &str,
+    slot: i64,
+    project_title: &str,
+    submitted_at: &str,
 ) -> anyhow::Result<PathBuf> {
     use std::fs::File;
     use std::io::Write;
@@ -325,7 +388,11 @@ pub fn create_submission_zip(
 
 /// Unpack collected zips into {root_folder}/{NN}-{name}/ keeping only the
 /// highest-counter zip per key. Returns {organized:[...], errors:[...]}.
-pub fn organize_submissions(root_folder: &str, zips_folder: &str, key_lookup: &std::collections::HashMap<String, (i64, String)>) -> Value {
+pub fn organize_submissions(
+    root_folder: &str,
+    zips_folder: &str,
+    key_lookup: &std::collections::HashMap<String, (i64, String)>,
+) -> Value {
     use std::collections::HashMap;
     use std::fs::File;
     use std::io::Read;
@@ -340,24 +407,54 @@ pub fn organize_submissions(root_folder: &str, zips_folder: &str, key_lookup: &s
     let mut best: HashMap<String, (i64, PathBuf)> = HashMap::new();
     let mut errors: Vec<String> = Vec::new();
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&zdir)
-        .into_iter().flatten().flatten().map(|e| e.path()).collect();
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
     entries.sort();
     for zp in entries {
         if zp.extension().and_then(|e| e.to_str()) != Some("zip") {
             continue;
         }
-        let zname = zp.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-        let file = match File::open(&zp) { Ok(f) => f, Err(e) => { errors.push(format!("{}: {e}", zname)); continue; } };
-        let mut za = match zip::ZipArchive::new(file) { Ok(a) => a, Err(e) => { errors.push(format!("{}: {e}", zname)); continue; } };
+        let zname = zp
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let file = match File::open(&zp) {
+            Ok(f) => f,
+            Err(e) => {
+                errors.push(format!("{}: {e}", zname));
+                continue;
+            }
+        };
+        let mut za = match zip::ZipArchive::new(file) {
+            Ok(a) => a,
+            Err(e) => {
+                errors.push(format!("{}: {e}", zname));
+                continue;
+            }
+        };
         let meta: Value = match za.by_name("meta.json") {
             Ok(mut zf) => {
                 let mut buf = Vec::new();
-                if zf.read_to_end(&mut buf).is_err() { errors.push(format!("{}: bad meta", zname)); continue; }
+                if zf.read_to_end(&mut buf).is_err() {
+                    errors.push(format!("{}: bad meta", zname));
+                    continue;
+                }
                 serde_json::from_slice(&buf).unwrap_or(Value::Null)
             }
-            Err(_) => { errors.push(format!("{}: no meta.json", zname)); continue; }
+            Err(_) => {
+                errors.push(format!("{}: no meta.json", zname));
+                continue;
+            }
         };
-        let key = meta.get("key").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let key = meta
+            .get("key")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let counter = meta.get("counter").and_then(|v| v.as_i64()).unwrap_or(0);
         if !key_lookup.contains_key(&key) {
             errors.push(format!("{}: unknown key (not in this assignment)", zname));
@@ -376,10 +473,25 @@ pub fn organize_submissions(root_folder: &str, zips_folder: &str, key_lookup: &s
         let target = root.join(&folder);
         let _ = std::fs::create_dir_all(&target);
         let target_resolved = target.canonicalize().unwrap_or_else(|_| target.clone());
-        let file = match File::open(zp) { Ok(f) => f, Err(e) => { errors.push(format!("{}: {e}", zp.display())); continue; } };
-        let mut za = match zip::ZipArchive::new(file) { Ok(a) => a, Err(e) => { errors.push(format!("{}: {e}", zp.display())); continue; } };
+        let file = match File::open(zp) {
+            Ok(f) => f,
+            Err(e) => {
+                errors.push(format!("{}: {e}", zp.display()));
+                continue;
+            }
+        };
+        let mut za = match zip::ZipArchive::new(file) {
+            Ok(a) => a,
+            Err(e) => {
+                errors.push(format!("{}: {e}", zp.display()));
+                continue;
+            }
+        };
         for i in 0..za.len() {
-            let mut zf = match za.by_index(i) { Ok(z) => z, Err(_) => continue };
+            let mut zf = match za.by_index(i) {
+                Ok(z) => z,
+                Err(_) => continue,
+            };
             let mname = zf.name().to_string();
             if mname == "meta.json" || mname.ends_with('/') {
                 continue;
@@ -389,16 +501,24 @@ pub fn organize_submissions(root_folder: &str, zips_folder: &str, key_lookup: &s
             use path_clean::PathClean;
             let dest_clean = dest.clean();
             if dest_clean != target_resolved && !dest_clean.starts_with(&target_resolved) {
-                errors.push(format!("{}: skipping unsafe path {:?}", zp.file_name().and_then(|n|n.to_str()).unwrap_or(""), mname));
+                errors.push(format!(
+                    "{}: skipping unsafe path {:?}",
+                    zp.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+                    mname
+                ));
                 continue;
             }
-            if let Some(parent) = dest.parent() { let _ = std::fs::create_dir_all(parent); }
+            if let Some(parent) = dest.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
             let mut buf = Vec::new();
             if zf.read_to_end(&mut buf).is_ok() {
                 let _ = std::fs::write(&dest, &buf);
             }
         }
-        organized.push(json!({ "student": name, "serial": serial, "folder": folder, "counter": counter }));
+        organized.push(
+            json!({ "student": name, "serial": serial, "folder": folder, "counter": counter }),
+        );
     }
     organized.sort_by_key(|v| v.get("serial").and_then(|s| s.as_i64()).unwrap_or(0));
     json!({ "organized": organized, "errors": errors })
@@ -408,7 +528,9 @@ pub fn organize_submissions(root_folder: &str, zips_folder: &str, key_lookup: &s
 pub fn scan_workspace(root_folder: &str) -> Vec<(String, String)> {
     let root = PathBuf::from(root_folder);
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(&root) else { return out };
+    let Ok(rd) = std::fs::read_dir(&root) else {
+        return out;
+    };
     let mut entries: Vec<_> = rd.flatten().collect();
     entries.sort_by_key(|e| e.file_name().to_string_lossy().to_lowercase());
     for e in entries {
@@ -426,23 +548,49 @@ pub fn scan_workspace(root_folder: &str) -> Vec<(String, String)> {
 
 /// Snapshot a project as a git commit. Returns the commit hash, or None.
 /// Commit message: `Submission #{seq} {ISO-8601 ms UTC Z}`.
-pub fn submission_commit(root: &Path, id: &str, local_path: Option<&str>, seq: i64, student_name: Option<&str>) -> Option<String> {
+pub fn submission_commit(
+    root: &Path,
+    id: &str,
+    local_path: Option<&str>,
+    seq: i64,
+    student_name: Option<&str>,
+) -> Option<String> {
     use std::process::Command;
     let d = project_root(root, id, local_path);
     if !d.exists() {
         return None;
     }
-    let ts = chrono::Utc::now()
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let msg = format!("Submission #{seq} {ts}");
     let author = student_name.unwrap_or("Student");
-    let _ = Command::new("git").args(["add", "-A"]).current_dir(&d).output();
     let _ = Command::new("git")
-        .args(["-c", &format!("user.name={author}"), "-c", "user.email=cppbox@localhost", "commit", "--allow-empty", "-m", &msg])
-        .current_dir(&d).output();
-    let out = Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&d).output().ok()?;
+        .args(["add", "-A"])
+        .current_dir(&d)
+        .output();
+    let _ = Command::new("git")
+        .args([
+            "-c",
+            &format!("user.name={author}"),
+            "-c",
+            "user.email=cppbox@localhost",
+            "commit",
+            "--allow-empty",
+            "-m",
+            &msg,
+        ])
+        .current_dir(&d)
+        .output();
+    let out = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&d)
+        .output()
+        .ok()?;
     let hash = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if hash.is_empty() { None } else { Some(hash) }
+    if hash.is_empty() {
+        None
+    } else {
+        Some(hash)
+    }
 }
 
 /// Extract the leading serial from a "NN-name" folder name.

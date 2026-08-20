@@ -39,14 +39,22 @@ pub struct DebugQuery {
 #[derive(Deserialize)]
 #[serde(tag = "cmd")]
 enum Cmd {
-    Start { breakpoints: HashMap<String, Vec<u32>> },
-    Bp { file: String, lines: Vec<u32> },
+    Start {
+        breakpoints: HashMap<String, Vec<u32>>,
+    },
+    Bp {
+        file: String,
+        lines: Vec<u32>,
+    },
     Continue,
     Next,
     StepIn,
     StepOut,
     Pause,
-    Expand { #[serde(rename = "ref")] vref: u64 },
+    Expand {
+        #[serde(rename = "ref")]
+        vref: u64,
+    },
     Stop,
 }
 
@@ -60,36 +68,88 @@ async fn run_session(socket: WebSocket, st: AppState, pid: String, std: String) 
     let (mut ws_sender, mut ws_receiver) = socket.split();
     let s = match fetch_one(&st.db, &pid).await {
         Ok(s) => s,
-        Err(e) => { let m = e.1; let _ = ws_sender.send(to_msg(json!({"type":"error","msg":m}))).await; return; }
+        Err(e) => {
+            let m = e.1;
+            let _ = ws_sender
+                .send(to_msg(json!({"type":"error","msg":m})))
+                .await;
+            return;
+        }
     };
     let lp = s.local_path.as_deref().filter(|p| !p.is_empty());
     let src = storage::collect_source_files(&st.root, &pid, lp);
     if src.is_empty() {
-        let _ = ws_sender.send(to_msg(json!({"type":"error","msg":"No source files"}))).await;
+        let _ = ws_sender
+            .send(to_msg(json!({"type":"error","msg":"No source files"})))
+            .await;
         return;
     }
-    let files: Vec<sandbox::File> = src.into_iter().map(|(n, c)| sandbox::File { name: n, content: c }).collect();
-    let _ = ws_sender.send(to_msg(json!({"type":"status","text":"Compiling (debug)…"}))).await;
+    let files: Vec<sandbox::File> = src
+        .into_iter()
+        .map(|(n, c)| sandbox::File {
+            name: n,
+            content: c,
+        })
+        .collect();
+    let _ = ws_sender
+        .send(to_msg(json!({"type":"status","text":"Compiling (debug)…"})))
+        .await;
 
     let (binary, job_dir) = match sandbox::compile_debug(&st.root, &files, &std).await {
         Ok(v) => v,
-        Err(e) => { let _ = ws_sender.send(to_msg(json!({"type":"error","msg":e}))).await; return; }
+        Err(e) => {
+            let _ = ws_sender
+                .send(to_msg(json!({"type":"error","msg":e})))
+                .await;
+            return;
+        }
     };
-    let abs = match job_dir.canonicalize() { Ok(a) => a, Err(_) => { return; } };
+    let abs = match job_dir.canonicalize() {
+        Ok(a) => a,
+        Err(_) => {
+            return;
+        }
+    };
 
     // spawn lldb-dap in a ptrace-enabled container
     let mut cmd = tokio::process::Command::new(sandbox::runtime());
-    cmd.args(["run", "--rm", "-i", "--cap-add", "SYS_PTRACE",
-              "--security-opt", "seccomp=unconfined", "--security-opt", "label=disable",
-              "--user", "0", "--network", "none", "--memory", "512m", "--cpus", "1"])
-        .arg("-v").arg(format!("{}:/home/sandbox/work:rw", abs.display()))
-        .args(["-w", "/home/sandbox/work"])
-        .arg(sandbox::sandbox_image())
-        .args(["lldb-dap"])
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.args([
+        "run",
+        "--rm",
+        "-i",
+        "--cap-add",
+        "SYS_PTRACE",
+        "--security-opt",
+        "seccomp=unconfined",
+        "--security-opt",
+        "label=disable",
+        "--user",
+        "0",
+        "--network",
+        "none",
+        "--memory",
+        "512m",
+        "--cpus",
+        "1",
+    ])
+    .arg("-v")
+    .arg(format!("{}:/home/sandbox/work:rw", abs.display()))
+    .args(["-w", "/home/sandbox/work"])
+    .arg(sandbox::sandbox_image())
+    .args(["lldb-dap"])
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
     let mut child = match cmd.spawn() {
         Ok(c) => c,
-        Err(e) => { let _ = ws_sender.send(to_msg(json!({"type":"error","msg":format!("lldb-dap spawn: {e}")}))).await; return; }
+        Err(e) => {
+            let _ = ws_sender
+                .send(to_msg(
+                    json!({"type":"error","msg":format!("lldb-dap spawn: {e}")}),
+                ))
+                .await;
+            return;
+        }
     };
     let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
@@ -108,10 +168,17 @@ async fn run_session(socket: WebSocket, st: AppState, pid: String, std: String) 
     let mut configured = false;
 
     // initialize + launch up front
-    let _ = send_request(&mut stdin, &pending, &seq, "initialize", Some(json!({
-        "clientID": "cppbox", "adapterID": "lldb",
-        "linesStartAt1": true, "columnsStartAt1": true, "pathFormat": "path",
-    }))).await;
+    let _ = send_request(
+        &mut stdin,
+        &pending,
+        &seq,
+        "initialize",
+        Some(json!({
+            "clientID": "cppbox", "adapterID": "lldb",
+            "linesStartAt1": true, "columnsStartAt1": true, "pathFormat": "path",
+        })),
+    )
+    .await;
     let _ = send_request(&mut stdin, &pending, &seq, "launch", Some(json!({
         "program": "/home/sandbox/work/a.out", "cwd": "/home/sandbox/work", "stopOnEntry": false,
     }))).await;
@@ -245,12 +312,17 @@ async fn write_dap(stdin: &mut ChildStdin, msg: &Value) {
 }
 
 async fn send_request(
-    stdin: &mut ChildStdin, pending: &Pending, seq: &AtomicU64,
-    command: &str, arguments: Option<Value>,
+    stdin: &mut ChildStdin,
+    pending: &Pending,
+    seq: &AtomicU64,
+    command: &str,
+    arguments: Option<Value>,
 ) -> Result<Value, String> {
     let n = seq.fetch_add(1, Ordering::Relaxed);
     let mut m = json!({ "seq": n, "type": "request", "command": command });
-    if let Some(a) = arguments { m["arguments"] = a; }
+    if let Some(a) = arguments {
+        m["arguments"] = a;
+    }
     let (otx, orx) = oneshot::channel();
     pending.lock().await.insert(n, otx);
     write_dap(stdin, &m).await;
@@ -261,44 +333,97 @@ async fn send_request(
 }
 
 async fn set_breakpoints(
-    stdin: &mut ChildStdin, pending: &Pending, seq: &AtomicU64,
-    file: &str, lines: &[u32],
+    stdin: &mut ChildStdin,
+    pending: &Pending,
+    seq: &AtomicU64,
+    file: &str,
+    lines: &[u32],
     ws_sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
 ) -> Result<(), ()> {
     let bps_arr: Vec<Value> = lines.iter().map(|l| json!({"line": l})).collect();
-    let resp = send_request(stdin, pending, seq, "setBreakpoints", Some(json!({
-        "source": {"path": format!("/home/sandbox/work/{file}")},
-        "breakpoints": bps_arr,
-        "lines": lines,
-        "sourceModified": false,
-    }))).await;
+    let resp = send_request(
+        stdin,
+        pending,
+        seq,
+        "setBreakpoints",
+        Some(json!({
+            "source": {"path": format!("/home/sandbox/work/{file}")},
+            "breakpoints": bps_arr,
+            "lines": lines,
+            "sourceModified": false,
+        })),
+    )
+    .await;
     if let Ok(r) = resp {
-        let results = r.get("body").and_then(|b| b.get("breakpoints")).and_then(|b| b.as_array()).cloned().unwrap_or_default();
-        let out: Vec<Value> = results.iter().map(|b| json!({
-            "line": b.get("line").cloned().unwrap_or(Value::Null),
-            "ok": b.get("verified").and_then(|v| v.as_bool()).unwrap_or(false),
-            "msg": b.get("message").cloned().unwrap_or(Value::Null),
-        })).collect();
-        let _ = ws_sender.send(to_msg(json!({"type":"breakpoints","file":file,"results":out}))).await;
+        let results = r
+            .get("body")
+            .and_then(|b| b.get("breakpoints"))
+            .and_then(|b| b.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let out: Vec<Value> = results
+            .iter()
+            .map(|b| {
+                json!({
+                    "line": b.get("line").cloned().unwrap_or(Value::Null),
+                    "ok": b.get("verified").and_then(|v| v.as_bool()).unwrap_or(false),
+                    "msg": b.get("message").cloned().unwrap_or(Value::Null),
+                })
+            })
+            .collect();
+        let _ = ws_sender
+            .send(to_msg(
+                json!({"type":"breakpoints","file":file,"results":out}),
+            ))
+            .await;
     }
     Ok(())
 }
 
-async fn step_cmd(stdin: &mut ChildStdin, pending: &Pending, seq: &AtomicU64, cmd: &str, thread_id: Option<u64>) -> Result<(), ()> {
-    let tid = match thread_id { Some(t) => t, None => return Err(()) };
+async fn step_cmd(
+    stdin: &mut ChildStdin,
+    pending: &Pending,
+    seq: &AtomicU64,
+    cmd: &str,
+    thread_id: Option<u64>,
+) -> Result<(), ()> {
+    let tid = match thread_id {
+        Some(t) => t,
+        None => return Err(()),
+    };
     let _ = send_request(stdin, pending, seq, cmd, Some(json!({"threadId": tid}))).await;
     Ok(())
 }
 
 /// Strip the in-container workdir prefix from a DAP source path.
 fn norm_path(p: &str) -> String {
-    p.strip_prefix("/home/sandbox/work/").map(str::to_string).unwrap_or_else(|| p.to_string())
+    p.strip_prefix("/home/sandbox/work/")
+        .map(str::to_string)
+        .unwrap_or_else(|| p.to_string())
 }
 
 /// Fetch locals/args for a frame (all scopes' variables, one level deep).
-async fn fetch_vars(stdin: &mut ChildStdin, pending: &Pending, seq: &AtomicU64, frame_id: u64) -> Option<Vec<Value>> {
-    let r = send_request(stdin, pending, seq, "scopes", Some(json!({"frameId": frame_id}))).await.ok()?;
-    let scopes = r.get("body").and_then(|b| b.get("scopes")).and_then(|b| b.as_array()).cloned().unwrap_or_default();
+async fn fetch_vars(
+    stdin: &mut ChildStdin,
+    pending: &Pending,
+    seq: &AtomicU64,
+    frame_id: u64,
+) -> Option<Vec<Value>> {
+    let r = send_request(
+        stdin,
+        pending,
+        seq,
+        "scopes",
+        Some(json!({"frameId": frame_id})),
+    )
+    .await
+    .ok()?;
+    let scopes = r
+        .get("body")
+        .and_then(|b| b.get("scopes"))
+        .and_then(|b| b.as_array())
+        .cloned()
+        .unwrap_or_default();
     let mut vars: Vec<Value> = Vec::new();
     for sc in &scopes {
         // keep only the meaningful locals/args scopes; drop registers etc.
@@ -306,10 +431,30 @@ async fn fetch_vars(stdin: &mut ChildStdin, pending: &Pending, seq: &AtomicU64, 
         if sname != "Locals" && sname != "Arguments" {
             continue;
         }
-        let vr = sc.get("variablesReference").and_then(|r| r.as_u64()).unwrap_or(0);
-        if vr == 0 { continue; }
-        let Ok(r2) = send_request(stdin, pending, seq, "variables", Some(json!({"variablesReference": vr}))).await else { continue };
-        let raw = r2.get("body").and_then(|b| b.get("variables")).and_then(|b| b.as_array()).cloned().unwrap_or_default();
+        let vr = sc
+            .get("variablesReference")
+            .and_then(|r| r.as_u64())
+            .unwrap_or(0);
+        if vr == 0 {
+            continue;
+        }
+        let Ok(r2) = send_request(
+            stdin,
+            pending,
+            seq,
+            "variables",
+            Some(json!({"variablesReference": vr})),
+        )
+        .await
+        else {
+            continue;
+        };
+        let raw = r2
+            .get("body")
+            .and_then(|b| b.get("variables"))
+            .and_then(|b| b.as_array())
+            .cloned()
+            .unwrap_or_default();
         for v in &raw {
             vars.push(json!({
                 "name": v.get("name").cloned().unwrap_or(Value::Null),
@@ -334,17 +479,26 @@ async fn read_dap_loop(stdout: ChildStdout, tx: mpsc::UnboundedSender<Value>, pe
                 Ok(0) | Err(_) => return,
                 Ok(_) => {}
             }
-            if line == b"\r\n" || line == b"\n" { break; }
+            if line == b"\r\n" || line == b"\n" {
+                break;
+            }
             let s = String::from_utf8_lossy(&line);
             if let Some(idx) = s.to_ascii_lowercase().find("content-length:") {
                 let rest = s[idx + b"content-length:".len()..].trim();
                 length = rest.parse::<usize>().ok();
             }
         }
-        let length = match length { Some(l) => l, None => continue };
+        let length = match length {
+            Some(l) => l,
+            None => continue,
+        };
         let mut body = vec![0u8; length];
-        if reader.read_exact(&mut body).await.is_err() { return; }
-        let Ok(v) = serde_json::from_slice::<Value>(&body) else { continue };
+        if reader.read_exact(&mut body).await.is_err() {
+            return;
+        }
+        let Ok(v) = serde_json::from_slice::<Value>(&body) else {
+            continue;
+        };
         match v.get("type").and_then(|t| t.as_str()) {
             Some("response") => {
                 if let Some(req_seq) = v.get("request_seq").and_then(|s| s.as_u64()) {
@@ -353,7 +507,9 @@ async fn read_dap_loop(stdout: ChildStdout, tx: mpsc::UnboundedSender<Value>, pe
                     }
                 }
             }
-            Some("event") => { let _ = tx.send(v); }
+            Some("event") => {
+                let _ = tx.send(v);
+            }
             _ => {}
         }
     }

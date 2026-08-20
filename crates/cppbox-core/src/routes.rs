@@ -96,8 +96,12 @@ pub struct ProjectCreate {
     pub main_code: Option<String>,
     pub local_path: Option<String>,
 }
-fn default_title() -> String { "Untitled".into() }
-fn default_std() -> String { "c++17".into() }
+fn default_title() -> String {
+    "Untitled".into()
+}
+fn default_std() -> String {
+    "c++17".into()
+}
 
 #[derive(Deserialize)]
 pub struct ProjectUpdate {
@@ -190,8 +194,16 @@ async fn create_project(
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_iso();
-    let title = if req.title.trim().is_empty() { "Untitled".to_string() } else { req.title };
-    let std = if req.cpp_standard.trim().is_empty() { "c++17".to_string() } else { req.cpp_standard };
+    let title = if req.title.trim().is_empty() {
+        "Untitled".to_string()
+    } else {
+        req.title
+    };
+    let std = if req.cpp_standard.trim().is_empty() {
+        "c++17".to_string()
+    } else {
+        req.cpp_standard
+    };
 
     sqlx::query(
         "INSERT INTO snippets (id, title, local_path, code, language, created_at, updated_at, version, cpp_standard, deleted_at)
@@ -209,14 +221,16 @@ async fn create_project(
 
     // create project folder + default main.cpp (mirrors Python init_project)
     let base = storage::project_root(&st.root, &id, req.local_path.as_deref());
-    std::fs::create_dir_all(&base).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    std::fs::create_dir_all(&base)
+        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     storage::write_clangd_config(&st.root, &id, req.local_path.as_deref(), &std);
     storage::write_makefile(&st.root, &id, req.local_path.as_deref(), &std);
     storage::git_init_project(&st.root, &id, req.local_path.as_deref());
     let main_cpp = base.join("main.cpp");
     match req.main_code {
         Some(code) => {
-            std::fs::write(&main_cpp, code).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            std::fs::write(&main_cpp, code)
+                .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
         None if !main_cpp.exists() => {
             std::fs::write(&main_cpp, "#include <iostream>\n\nint main() {\n    std::cout << \"Hello, CPPBox!\\n\";\n    return 0;\n}\n")
@@ -235,9 +249,13 @@ async fn update_project(
     Json(req): Json<ProjectUpdate>,
 ) -> Result<Json<Value>, ApiError> {
     let s = fetch_one(&st.db, &pid).await?;
-    let title = req.title.unwrap_or(s.title.unwrap_or_else(|| "Untitled".into()));
+    let title = req
+        .title
+        .unwrap_or(s.title.unwrap_or_else(|| "Untitled".into()));
     let std_changed = req.cpp_standard.is_some();
-    let cpp_standard = req.cpp_standard.unwrap_or(s.cpp_standard.unwrap_or_else(|| "c++17".into()));
+    let cpp_standard = req
+        .cpp_standard
+        .unwrap_or(s.cpp_standard.unwrap_or_else(|| "c++17".into()));
     let local_path = req.local_path.or(s.local_path);
     let now = now_iso();
     sqlx::query("UPDATE snippets SET title = ?, cpp_standard = ?, local_path = ?, updated_at = ? WHERE id = ?")
@@ -369,25 +387,28 @@ async fn delete_file(
 
 // ── compile / run / diagnostics / format ─────────────────────────────────
 fn to_files(items: Vec<FileItem>) -> Vec<sandbox::File> {
-    items.into_iter().map(|f| sandbox::File { name: f.name, content: f.content }).collect()
+    items
+        .into_iter()
+        .map(|f| sandbox::File {
+            name: f.name,
+            content: f.content,
+        })
+        .collect()
 }
 
-async fn run_code(
-    State(st): State<AppState>,
-    Json(req): Json<RunRequest>,
-) -> Json<Value> {
+async fn run_code(State(st): State<AppState>, Json(req): Json<RunRequest>) -> Json<Value> {
     let files = match req.files {
         Some(fs) if !fs.is_empty() => to_files(fs),
-        _ if !req.code.is_empty() => vec![sandbox::File { name: "main.cpp".into(), content: req.code }],
+        _ if !req.code.is_empty() => vec![sandbox::File {
+            name: "main.cpp".into(),
+            content: req.code,
+        }],
         _ => vec![],
     };
     Json(sandbox::compile_and_run(&st.root, &files, &req.stdin, &req.std).await)
 }
 
-async fn check_code(
-    State(st): State<AppState>,
-    Json(req): Json<CheckRequest>,
-) -> Json<Value> {
+async fn check_code(State(st): State<AppState>, Json(req): Json<CheckRequest>) -> Json<Value> {
     let files = to_files(req.files);
     let diags = sandbox::check_syntax(&st.root, &files, &req.std, req.entry.as_deref()).await;
     Json(json!({ "diagnostics": diags }))
@@ -429,7 +450,9 @@ async fn get_settings() -> Json<Value> {
     }))
 }
 
-async fn put_settings(Json(req): Json<crate::settings::SettingsFile>) -> Result<Json<Value>, ApiError> {
+async fn put_settings(
+    Json(req): Json<crate::settings::SettingsFile>,
+) -> Result<Json<Value>, ApiError> {
     let p = crate::settings::save(&req)
         .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(json!({ "ok": true, "path": p.display().to_string() })))
@@ -443,12 +466,16 @@ async fn run_project(
     let s = fetch_one(&st.db, &pid).await?;
     let src = storage::collect_source_files(&st.root, &pid, lp(&s));
     if src.is_empty() {
-        return Ok(Json(json!({ "ok": false, "stage": "compile", "compile_output": "No source files found.", "run_output": "" })));
+        return Ok(Json(
+            json!({ "ok": false, "stage": "compile", "compile_output": "No source files found.", "run_output": "" }),
+        ));
     }
     // Build with make (incremental; avoids re-compiling unchanged sources) then run ./app
     let lpv = lp(&s).map(str::to_string);
     let std = s.cpp_standard.unwrap_or_else(|| "c++17".into());
-    Ok(Json(sandbox::make_and_run(&st.root, &pid, lpv.as_deref(), &req.stdin, &std).await))
+    Ok(Json(
+        sandbox::make_and_run(&st.root, &pid, lpv.as_deref(), &req.stdin, &std).await,
+    ))
 }
 
 async fn check_project(
@@ -460,7 +487,13 @@ async fn check_project(
     if src.is_empty() {
         return Ok(Json(json!({ "diagnostics": [] })));
     }
-    let files: Vec<_> = src.into_iter().map(|(n, c)| sandbox::File { name: n, content: c }).collect();
+    let files: Vec<_> = src
+        .into_iter()
+        .map(|(n, c)| sandbox::File {
+            name: n,
+            content: c,
+        })
+        .collect();
     let std = s.cpp_standard.unwrap_or_else(|| "c++17".into());
     let diags = sandbox::check_syntax(&st.root, &files, &std, None).await;
     Ok(Json(json!({ "diagnostics": diags })))

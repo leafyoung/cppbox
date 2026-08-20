@@ -45,7 +45,9 @@ pub async fn ws_handler(wsu: WebSocketUpgrade, State(st): State<AppState>) -> im
 
 async fn run_session(socket: WebSocket, root: PathBuf) {
     let id = uuid::Uuid::new_v4().simple();
-    let ws_dir = root.join("workdir").join(format!("ws_{}", &id.to_string()[..12]));
+    let ws_dir = root
+        .join("workdir")
+        .join(format!("ws_{}", &id.to_string()[..12]));
     if std::fs::create_dir_all(&ws_dir).is_err() {
         return;
     }
@@ -133,11 +135,19 @@ async fn handle_ws_to_clangd(
         if v.get("method").and_then(|m| m.as_str()) == Some("$/sync") {
             let id = v.get("id").cloned();
             let params = v.get("params").cloned().unwrap_or(json!({}));
-            let std = params.get("std").and_then(|s| s.as_str()).unwrap_or("c++17").to_string();
+            let std = params
+                .get("std")
+                .and_then(|s| s.as_str())
+                .unwrap_or("c++17")
+                .to_string();
             if let Some(files) = params.get("files").and_then(|f| f.as_array()) {
                 for f in files {
-                    let Some(name) = f.get("name").and_then(|n| n.as_str()) else { continue };
-                    let Some(content) = f.get("content").and_then(|c| c.as_str()) else { continue };
+                    let Some(name) = f.get("name").and_then(|n| n.as_str()) else {
+                        continue;
+                    };
+                    let Some(content) = f.get("content").and_then(|c| c.as_str()) else {
+                        continue;
+                    };
                     let p = ws_dir.join(name);
                     if let Some(parent) = p.parent() {
                         let _ = std::fs::create_dir_all(parent);
