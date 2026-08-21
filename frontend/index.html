@@ -101,6 +101,14 @@ button { font-family:inherit; }
 .tree-panel.collapsed { width:28px; }
 .tree-head { display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-bottom:1px solid var(--border); font-size:12px; color:var(--dim); }
 .tree-panel.collapsed .tree-head span, .tree-panel.collapsed .tree-body { display:none; }
+.docs-panel { width:380px; background:var(--surface); border-left:1px solid var(--border); display:none; flex-direction:column; flex-shrink:0; }
+.docs-panel.open { display:flex; }
+.docs-head { display:flex; align-items:center; gap:6px; padding:8px 10px; border-bottom:1px solid var(--border); font-size:13px; font-weight:600; color:var(--text); }
+.docs-head span:first-child { flex:1; }
+.docs-bar { display:flex; gap:6px; padding:8px 10px; border-bottom:1px solid var(--border); }
+.docs-bar input { flex:1; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:5px 8px; border-radius:4px; font-size:11px; outline:none; font-family:'JetBrains Mono',monospace; }
+.docs-msg { display:none; padding:6px 10px; font-size:11px; color:var(--red); border-bottom:1px solid var(--border); }
+.docs-panel iframe { flex:1; border:none; background:#fff; }
 .tree-body { flex:1; overflow:auto; padding:4px 0; }
 .tree-row { display:flex; align-items:center; padding:3px 8px; cursor:pointer; font-size:12px; white-space:nowrap; gap:4px; }
 .tree-row:hover { background:var(--surface2); }
@@ -260,6 +268,7 @@ button { font-family:inherit; }
       <button class="btn btn-ghost" onclick="showAdmin()">🎓 Admin</button>
       <button class="btn btn-primary" onclick="showSubmit()">📤 Submit</button>
       <button class="btn btn-ghost" onclick="showVscode()">🔗 VS Code</button>
+      <button class="btn btn-ghost" id="docsBtn" onclick="toggleDocs()" title="cppreference.com">📚</button>
       <button class="btn" id="dbgBtn" onclick="debugToggle()" title="Debug with lldb (F5)">🐞 Debug</button>
       <button class="btn btn-green" id="runBtn" onclick="runCode()">▶ Run</button>
       <button class="btn" id="rebuildBtn" onclick="runCode(true)" title="make clean && make && run (Shift+Ctrl+Enter)">🔄 Rebuild</button>
@@ -305,6 +314,20 @@ button { font-family:inherit; }
     <div class="tree-body" id="treeBody"><div class="tree-empty">Open a project</div></div>
     <button class="tree-toggle" style="display:none; margin:4px;" id="expandTree" onclick="toggleTree()">▶</button>
   </div>
+</div>
+
+<div class="docs-panel" id="docsPanel">
+  <div class="docs-head">
+    <span>📚 cppreference</span>
+    <button class="tree-toggle" onclick="docsHome()" title="Home — https://www.cppreference.com">🏠</button>
+    <button class="tree-toggle" onclick="toggleDocs()" title="Close panel">▶</button>
+  </div>
+  <div class="docs-bar">
+    <input id="docsUrl" type="text" placeholder="cppreference URL or search term" onkeydown="if(event.key==='Enter')docsGo()">
+    <button class="btn" onclick="docsGo()">Go</button>
+  </div>
+  <div class="docs-msg" id="docsMsg"></div>
+  <iframe id="docsFrame" title="cppreference" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
 </div>
 
 <div class="modal-bg" id="vscodeModal" onclick="if(event.target===this)hideVscode()">
@@ -586,6 +609,32 @@ function toggleTree(){
   const p=document.getElementById('treePanel');
   p.classList.toggle('collapsed');
   document.getElementById('expandTree').style.display=p.classList.contains('collapsed')?'block':'none';
+}
+
+// ── cppreference docs panel (restricted to https://www.cppreference.com/*) ──
+function toggleDocs(){
+  const p=document.getElementById('docsPanel');
+  p.classList.toggle('open');
+  const f=document.getElementById('docsFrame');
+  if(p.classList.contains('open') && !f.src) docsHome();
+}
+function docsAllowed(url){
+  try{ const u=new URL(url); return u.protocol==='https:' && u.hostname==='www.cppreference.com'; }
+  catch(e){ return false; }
+}
+function docsLoad(url){
+  const msg=document.getElementById('docsMsg'), f=document.getElementById('docsFrame');
+  if(!docsAllowed(url)){ msg.style.display='block'; msg.textContent='Blocked: only https://www.cppreference.com/* can be displayed here.'; return; }
+  msg.style.display='none';
+  f.src=url;
+  document.getElementById('docsUrl').value=url;
+}
+function docsHome(){ docsLoad('https://www.cppreference.com/'); }
+function docsGo(){
+  const v=document.getElementById('docsUrl').value.trim();
+  if(!v) return;
+  if(/^https?:\/\//i.test(v)) docsLoad(v);   // full URL — validated by docsAllowed
+  else docsLoad('https://www.cppreference.com/mwiki/index.php?search='+encodeURIComponent(v));
 }
 async function newFile(dirPath){
   if(!project){setStatus('Open or create a project first');return;}
