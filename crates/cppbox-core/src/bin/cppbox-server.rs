@@ -18,6 +18,11 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::connect(&data_dir.join("cppbox.db")).await?;
     db::migrate(&pool).await?;
 
+    // initialization: pull (ghcr, fresh installs) + smoke-test the sandbox image
+    std::thread::spawn(|| {
+        cppbox_core::sandbox::ensure_sandbox_image();
+    });
+
     let frontend = std::env::var("CPPBOX_FRONTEND")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| root.join("frontend"));

@@ -1,6 +1,7 @@
-// CPPBox desktop launcher. Starts the embedded Rust (axum) backend on
-// 127.0.0.1:<dynamic>, then shows a small window with a clickable link that
-// opens the app in the default browser. No embedded app webview.
+// CPPBox desktop app. Embeds the Rust (axum) backend in-process on
+// 127.0.0.1:<dynamic> and hosts the UI inside the app window. Single
+// instance: a second launch focuses the existing window and exits. The server
+// is localhost-only; no external browser is opened.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
@@ -28,34 +29,24 @@ fn frontend_dir(app: &tauri::App) -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("frontend"))
 }
 
-#[tauri::command]
-fn app_port(state: tauri::State<AppHandle>) -> u16 {
-    state.port
-}
-
-#[tauri::command]
-fn open_browser(url: String) {
-    #[cfg(target_os = "linux")]
-    let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
-    #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open").arg(&url).spawn();
-    #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("cmd")
-        .args(["/C", "start", "", &url])
-        .spawn();
-}
-
-struct AppHandle {
-    port: u16,
-}
-
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // a second instance just focuses the existing window and exits
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let data_root = data_root();
             std::fs::create_dir_all(&data_root).expect("create data dir");
             let frontend = frontend_dir(app);
+
+            // init: pull (ghcr on fresh installs) + smoke-test the sandbox image
+            std::thread::spawn(|| {
+                cppbox_core::sandbox::ensure_sandbox_image();
+            });
 
             // start the embedded axum backend on a dynamic localhost port
             let (tx, rx) = std::sync::mpsc::channel::<u16>();
@@ -95,23 +86,19 @@ fn main() {
             let port = rx.recv().expect("backend did not bind a port");
             eprintln!("CPPBOX_PORT={port}");
 
-            // small launcher window with the clickable link
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("CPPBox")
-                .inner_size(460.0, 210.0)
-                .resizable(false)
-                .build()?;
-            app.manage(AppHandle { port });
-
-            // auto-open the default browser once (the window link can reopen it)
+            // host the app UI inside the window (no external browser)
             let url = format!("http://127.0.0.1:{port}");
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(700));
-                open_browser(url);
-            });
+            WebviewWindowBuilder::new(
+                app,
+                "main",
+                WebviewUrl::External(url.parse().expect("valid localhost url")),
+            )
+            .title("CPPBox")
+            .inner_size(1280.0, 820.0)
+            .min_inner_size(900.0, 600.0)
+            .build()?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![app_port, open_browser])
         .run(tauri::generate_context!())
         .expect("error while running CPPBox");
 }

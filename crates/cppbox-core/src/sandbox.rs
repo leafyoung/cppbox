@@ -8,8 +8,107 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tokio::process::Command;
 
+/// Canonical registry image (public on ghcr; published by release CI).
+pub const GHCR_IMAGE: &str = "ghcr.io/leafyoung/cppbox-sandbox:latest";
+
+/// Resolve which sandbox image to use:
+///   1. $CPPBOX_SANDBOX_IMAGE (explicit override)
+///   2. a locally-built unqualified tag `cpp-sandbox:latest` (dev machines)
+///   3. ghcr.io/leafyoung/cppbox-sandbox:latest (fresh installs pull from ghcr)
 pub fn sandbox_image() -> String {
-    std::env::var("CPPBOX_SANDBOX_IMAGE").unwrap_or_else(|_| "cpp-sandbox:latest".into())
+    if let Ok(v) = std::env::var("CPPBOX_SANDBOX_IMAGE") {
+        if !v.trim().is_empty() {
+            return v;
+        }
+    }
+    if image_exists("cpp-sandbox:latest") {
+        return "cpp-sandbox:latest".into();
+    }
+    GHCR_IMAGE.into()
+}
+
+fn image_exists(reference: &str) -> bool {
+    std::process::Command::new(runtime())
+        .args(["image", "inspect", reference])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Sandbox readiness shared with the status endpoint: 0 unknown, 1 pulling,
+/// 2 ready, 3 failed.
+static SANDBOX_STATE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static SANDBOX_MSG: OnceLock<String> = OnceLock::new();
+
+pub fn sandbox_state() -> (u8, String) {
+    (
+        SANDBOX_STATE.load(std::sync::atomic::Ordering::Relaxed),
+        SANDBOX_MSG.get().cloned().unwrap_or_default(),
+    )
+}
+
+/// Initialization: make sure the sandbox image is present (pull from ghcr on a
+/// fresh install) and prove it works by compiling+running a sample program.
+/// Blocking; call from a background thread at startup.
+pub fn ensure_sandbox_image() {
+    let rt = runtime();
+    let set = |code: u8, msg: String| {
+        SANDBOX_STATE.store(code, std::sync::atomic::Ordering::Relaxed);
+        let _ = SANDBOX_MSG.set(msg.clone());
+        tracing::info!("sandbox init: {msg}");
+        eprintln!("sandbox init: {msg}");
+    };
+    let image = sandbox_image();
+    if image_exists(&image) {
+        set(1, format!("image {image} present"));
+    } else {
+        set(1, format!("image {image} missing, pulling from ghcr…"));
+        let out = std::process::Command::new(&rt)
+            .args(["pull", &image])
+            .output();
+        match out {
+            Ok(o) if o.status.success() => set(1, format!("pulled {image}")),
+            Ok(o) => {
+                let tail = String::from_utf8_lossy(&o.stderr);
+                let tail = tail.lines().last().unwrap_or("").to_string();
+                set(3, format!("pull {image} failed: {tail}"));
+                return;
+            }
+            Err(e) => {
+                set(3, format!("pull {image} failed: {e}"));
+                return;
+            }
+        }
+    }
+    // smoke test: compile and run a sample program inside the container
+    let test = "printf 'int main(){return 0;}' > /home/sandbox/t.cpp && clang++ -std=c++17 /home/sandbox/t.cpp -o /home/sandbox/t && /home/sandbox/t";
+    let out = std::process::Command::new(&rt)
+        .args([
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--memory",
+            "512m",
+            "--security-opt",
+            "label=disable",
+            &image,
+            "sh",
+            "-c",
+            test,
+        ])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => set(2, format!("sandbox ready ({image} smoke test ok)")),
+        Ok(o) => {
+            let tail = String::from_utf8_lossy(&o.stderr);
+            let tail = tail.lines().last().unwrap_or("").to_string();
+            set(3, format!("smoke test failed on {image}: {tail}"));
+        }
+        Err(e) => set(3, format!("smoke test failed on {image}: {e}")),
+    }
 }
 
 /// Compile with debug symbols (-g -O0) for gdb. Returns (binary, job_dir).

@@ -4,13 +4,16 @@
   "version": "0.1.0",
   "identifier": "com.leafyoung.cppbox",
   "build": {
-    "frontendDist": "ui"
+    "frontendDist": "../frontend"
   },
   "app": {
     "windows": [],
     "security": {
       "csp": null,
-      "assetProtocol": { "enable": false, "scope": [] }
+      "assetProtocol": {
+        "enable": false,
+        "scope": []
+      }
     },
     "withGlobalTauri": true
   },
@@ -25,14 +28,18 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
-    "resources": ["../frontend/**/*"],
+    "resources": [
+      "../frontend/**/*"
+    ],
     "category": "DeveloperTool"
   },
   "plugins": {
     "updater": {
       "active": true,
       "dialog": true,
-      "endpoints": ["https://github.com/leafyoung/cppbox/releases/latest/download/latest.json"],
+      "endpoints": [
+        "https://github.com/leafyoung/cppbox/releases/latest/download/latest.json"
+      ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ1NTZENzZFQTM0M0JERUEKUldUcXZVT2pidGRXMVp1YVYwVHhmT0tyMGYra3VrSm0rS3lZUWI4aTY0TjUxeW0vWkRTSlV6cGsK"
     }
   }

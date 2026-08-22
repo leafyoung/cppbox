@@ -15,6 +15,7 @@ Status labels: `[DONE]` shipped · `[DEFERRED]` deliberately parked until its "w
 - **Rename/create via prompt** `[DEFERRED]`: tree actions use `window.prompt`. Swap for inline inputs when polish matters.
 - **C++23 keyword set == C++20** `[N/A]`: C++23 adds no new core keywords beyond C++20, so highlighting is identical for 20/23. Accurate, not a gap.
 - **SSH/Remote-SSH bootstrap** `[DEFERRED]`: host exposes SSH (ap308:22); the user configures their VS Code Remote-SSH host entry. No auto keygen/config write yet.
+- **Formatter indent width** `[TODO]`: clang-format runs with the default style (2-space); it shall use the configured indent size (settings `indent`) via `--style={BasedOnStyle: LLVM, IndentWidth: N}` so formatting matches the editor's indent dropdown.
 - **Theme coverage** `[DEFERRED]`: CM editor + app CSS variables are themed per scheme; not every pixel (e.g. modal accents) is tuned. Expand when a scheme looks off.
 
 ## Before first release

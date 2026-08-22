@@ -10,6 +10,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-updater = "2"
+tauri-plugin-single-instance = "2"
 cppbox-core = { path = "../crates/cppbox-core" }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }

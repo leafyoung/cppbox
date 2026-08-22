@@ -35,6 +35,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/check", post(check_code))
         .route("/api/format", post(format_code_endpoint))
         .route("/api/settings", get(get_settings).put(put_settings))
+        .route("/api/sandbox/status", get(sandbox_status))
         .route("/api/projects/{pid}/run", post(run_project))
         .route("/api/projects/{pid}/rebuild", post(rebuild_project))
         .route("/api/projects/{pid}/check", post(check_project))
@@ -437,6 +438,12 @@ async fn read_file_raw(
         "application/octet-stream"
     };
     Ok(([(axum::http::header::CONTENT_TYPE, ct)], bytes).into_response())
+}
+
+/// Sandbox image init state (0 unknown, 1 pulling/present, 2 ready, 3 failed).
+async fn sandbox_status() -> Json<Value> {
+    let (state, msg) = sandbox::sandbox_state();
+    Json(json!({ "state": state, "ready": state == 2, "message": msg }))
 }
 
 // ── user settings (~/.cppbox/cppbox.yaml) ──────────────────────────────
