@@ -36,6 +36,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/format", post(format_code_endpoint))
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/sandbox/status", get(sandbox_status))
+        .route("/api/projects/{pid}/submissions", get(list_submissions))
         .route("/api/projects/{pid}/run", post(run_project))
         .route("/api/projects/{pid}/rebuild", post(rebuild_project))
         .route("/api/projects/{pid}/check", post(check_project))
@@ -81,6 +82,7 @@ pub struct CheckRequest {
 #[derive(Deserialize)]
 pub struct FormatRequest {
     pub code: String,
+    pub indent: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -111,6 +113,8 @@ pub struct ProjectUpdate {
     pub cpp_standard: Option<String>,
     pub local_path: Option<String>,
     pub stdin: Option<String>,
+    pub flags: Option<String>,
+    pub tests: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -148,6 +152,8 @@ fn proj_meta(s: &Snippet) -> Value {
         "deleted_at": s.deleted_at,
         "local_path": s.local_path,
         "stdin": s.stdin.clone().unwrap_or_default(),
+        "flags": serde_json::from_str::<Value>(s.flags.as_deref().unwrap_or("{}")).unwrap_or(json!({})),
+        "tests": serde_json::from_str::<Value>(s.tests.as_deref().unwrap_or("[]")).unwrap_or(json!([])),
     })
 }
 
@@ -228,7 +234,7 @@ async fn create_project(
     std::fs::create_dir_all(&base)
         .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     storage::write_clangd_config(&st.root, &id, req.local_path.as_deref(), &std);
-    storage::write_makefile(&st.root, &id, req.local_path.as_deref(), &std);
+    storage::write_makefile(&st.root, &id, req.local_path.as_deref(), &std, "-O2");
     storage::git_init_project(&st.root, &id, req.local_path.as_deref());
     let main_cpp = base.join("main.cpp");
     match req.main_code {
@@ -257,26 +263,37 @@ async fn update_project(
         .title
         .unwrap_or(s.title.unwrap_or_else(|| "Untitled".into()));
     let std_changed = req.cpp_standard.is_some();
+    let flags_changed = req.flags.is_some() && req.flags != s.flags;
     let cpp_standard = req
         .cpp_standard
         .unwrap_or(s.cpp_standard.unwrap_or_else(|| "c++17".into()));
     let local_path = req.local_path.or(s.local_path);
     let stdin = req.stdin.or(s.stdin);
+    let flags = req.flags.or(s.flags);
+    let tests = req.tests.or(s.tests);
     let now = now_iso();
-    sqlx::query("UPDATE snippets SET title = ?, cpp_standard = ?, local_path = ?, stdin = ?, updated_at = ? WHERE id = ?")
+    sqlx::query("UPDATE snippets SET title = ?, cpp_standard = ?, local_path = ?, stdin = ?, flags = ?, tests = ?, updated_at = ? WHERE id = ?")
         .bind(&title)
         .bind(&cpp_standard)
         .bind(&local_path)
         .bind(&stdin)
+        .bind(&flags)
+        .bind(&tests)
         .bind(&now)
         .bind(&pid)
         .execute(&st.db)
         .await
         .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    // refresh the project's .clangd + Makefile when the standard changes
-    if std_changed {
+    // refresh the project's .clangd + Makefile when the standard or flags change
+    if std_changed || flags_changed {
         storage::write_clangd_config(&st.root, &pid, local_path.as_deref(), &cpp_standard);
-        storage::write_makefile(&st.root, &pid, local_path.as_deref(), &cpp_standard);
+        storage::write_makefile(
+            &st.root,
+            &pid,
+            local_path.as_deref(),
+            &cpp_standard,
+            &storage::flags_to_extra(flags.as_deref()),
+        );
     }
     let s = fetch_one(&st.db, &pid).await?;
     Ok(Json(proj_meta(&s)))
@@ -421,7 +438,12 @@ async fn check_code(State(st): State<AppState>, Json(req): Json<CheckRequest>) -
 }
 
 async fn format_code_endpoint(Json(req): Json<FormatRequest>) -> Json<Value> {
-    Json(json!({ "formatted": sandbox::format_code(&req.code, "LLVM").await }))
+    // honor the user's indent setting (default LLVM = 2)
+    let style = match req.indent {
+        Some(n) if n != 2 => format!("{{BasedOnStyle: LLVM, IndentWidth: {n}}}"),
+        _ => "LLVM".to_string(),
+    };
+    Json(json!({ "formatted": sandbox::format_code(&req.code, &style).await }))
 }
 
 /// Raw file bytes (PDF preview etc.). Content-Type set by extension.
@@ -448,6 +470,23 @@ async fn read_file_raw(
 async fn sandbox_status() -> Json<Value> {
     let (state, msg) = sandbox::sandbox_state();
     Json(json!({ "state": state, "ready": state == 2, "message": msg }))
+}
+
+/// Local submission history for a project (from /api/submit).
+async fn list_submissions(
+    State(st): State<AppState>,
+    Path(pid): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let rows: Vec<(i64, Option<i64>, Option<String>)> =
+        sqlx::query_as("SELECT id, counter, created_at FROM submission_log WHERE project_id = ? ORDER BY id DESC LIMIT 50")
+            .bind(&pid)
+            .fetch_all(&st.db)
+            .await
+            .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!(rows
+        .into_iter()
+        .map(|(id, counter, at)| json!({ "n": id, "counter": counter, "at": at }))
+        .collect::<Vec<_>>())))
 }
 
 // ── user settings (~/.cppbox/cppbox.yaml) ──────────────────────────────
@@ -496,8 +535,18 @@ async fn run_project(
     // Build with make (incremental; avoids re-compiling unchanged sources) then run ./app
     let lpv = lp(&s).map(str::to_string);
     let std = s.cpp_standard.unwrap_or_else(|| "c++17".into());
+    let extra = storage::flags_to_extra(s.flags.as_deref());
     Ok(Json(
-        sandbox::make_and_run(&st.root, &pid, lpv.as_deref(), &req.stdin, &std, false).await,
+        sandbox::make_and_run(
+            &st.root,
+            &pid,
+            lpv.as_deref(),
+            &req.stdin,
+            &std,
+            &extra,
+            false,
+        )
+        .await,
     ))
 }
 
@@ -516,8 +565,18 @@ async fn rebuild_project(
     }
     let lpv = lp(&s).map(str::to_string);
     let std = s.cpp_standard.unwrap_or_else(|| "c++17".into());
+    let extra = storage::flags_to_extra(s.flags.as_deref());
     Ok(Json(
-        sandbox::make_and_run(&st.root, &pid, lpv.as_deref(), &req.stdin, &std, true).await,
+        sandbox::make_and_run(
+            &st.root,
+            &pid,
+            lpv.as_deref(),
+            &req.stdin,
+            &std,
+            &extra,
+            true,
+        )
+        .await,
     ))
 }
 

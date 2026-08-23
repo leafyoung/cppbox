@@ -29,11 +29,11 @@
 - [x] Submit dialog lists the exact snapshot (file names + count) that gets graded
 - [x] aria-labels on icon buttons; role=tablist + arrow-key nav on editor and output tabs; focus-visible rings; --dim contrast bumped in dark themes
 
-### U6 — Pedagogy upgrades (follow-up round, not this round)
-- [ ] Toolchain panel per project: warnings (-Wall -Wextra -Werror), sanitizers (ASan/UBSan), -O level → written into Makefile; compile command reflects it
-- [ ] Test runner: expected-vs-actual cases with pass/fail badges before Submit
-- [ ] Command palette (Ctrl+Shift+P); clangd quick-fixes on diagnostics
-- [ ] Student-side submission history view
+### U6 — Pedagogy upgrades (DONE)
+- [x] Toolchain popover per project: -Werror, ASan+UBSan (compiler-rt added to the sandbox image; workflow republishes it), -O0/-O2 → snippets.flags → Makefile; binary now depends on the Makefile so flag changes rebuild
+- [x] Test runner: Tests tab — named cases (stdin + expected), Run Tests runs ./app per case with ✓/✗ badges and got-vs-expected diff; cases persist per project (snippets.tests)
+- [x] Command palette (Ctrl+Shift+P): 16 commands, fuzzy filter, arrows+Enter
+- [x] Student-side submission history: submission_log table; submit modal lists previous attempts (#counter · timeAgo)
 - Deferred as before: real role gating needs auth
 
 Items deliberately skipped for now. Add when the requirement becomes concrete.
@@ -51,7 +51,7 @@ Status labels: `[DONE]` shipped · `[DEFERRED]` deliberately parked until its "w
 - **Rename/create via prompt** `[DEFERRED]`: tree actions use `window.prompt`. Swap for inline inputs when polish matters.
 - **C++23 keyword set == C++20** `[N/A]`: C++23 adds no new core keywords beyond C++20, so highlighting is identical for 20/23. Accurate, not a gap.
 - **SSH/Remote-SSH bootstrap** `[DEFERRED]`: host exposes SSH (ap308:22); the user configures their VS Code Remote-SSH host entry. No auto keygen/config write yet.
-- **Formatter indent width** `[TODO]`: clang-format runs with the default style (2-space); it shall use the configured indent size (settings `indent`) via `--style={BasedOnStyle: LLVM, IndentWidth: N}` so formatting matches the editor's indent dropdown.
+- **Formatter indent width** `[DONE]`: /api/format accepts `indent`; style becomes `{BasedOnStyle: LLVM, IndentWidth: N}` (frontend sends the indent setting; N=2 keeps plain LLVM).
 - **Theme coverage** `[DEFERRED]`: CM editor + app CSS variables are themed per scheme; not every pixel (e.g. modal accents) is tuned. Expand when a scheme looks off.
 
 ## Before first release

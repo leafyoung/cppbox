@@ -4,6 +4,7 @@ FROM alpine:latest
 RUN apk add --no-cache \
     clang \
     lld \
+    compiler-rt \
     make \
     gcc \
     g++ \

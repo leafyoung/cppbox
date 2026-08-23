@@ -949,6 +949,13 @@ async fn submit(
     sqlx::query("INSERT INTO submissions(id,key,counter,project_id,project_title,zip_path,commit_hash,submitted_at) VALUES (?,?,?,?,?,?,?,?)")
         .bind(&id).bind(&req.key).bind(counter).bind(&proj.id).bind(&proj.title).bind(&zip_path.display().to_string()).bind(&commit_hash).bind(&submitted_at)
         .execute(&st.db).await.map_err(db_err)?;
+    let _ =
+        sqlx::query("INSERT INTO submission_log(project_id, counter, created_at) VALUES (?,?,?)")
+            .bind(&proj.id)
+            .bind(counter)
+            .bind(&submitted_at)
+            .execute(&st.db)
+            .await;
     Ok(Json(
         json!({ "ok": true, "key": req.key, "counter": counter, "zip": zip_name }),
     ))

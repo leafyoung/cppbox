@@ -18,6 +18,10 @@ pub struct Snippet {
     pub cpp_standard: Option<String>,
     pub deleted_at: Option<String>,
     pub stdin: Option<String>,
+    #[allow(dead_code)]
+    pub flags: Option<String>,
+    #[allow(dead_code)]
+    pub tests: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -160,6 +164,20 @@ pub async fn migrate(db: &SqlitePool) -> anyhow::Result<()> {
     let _ = sqlx::query("ALTER TABLE snippets ADD COLUMN stdin TEXT")
         .execute(db)
         .await;
+    let _ = sqlx::query("ALTER TABLE snippets ADD COLUMN flags TEXT")
+        .execute(db)
+        .await;
+    let _ = sqlx::query("ALTER TABLE snippets ADD COLUMN tests TEXT")
+        .execute(db)
+        .await;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS submission_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT, counter INTEGER, created_at TEXT
+        )",
+    )
+    .execute(db)
+    .await?;
     Ok(())
 }
 
