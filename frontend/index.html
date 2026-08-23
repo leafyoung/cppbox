@@ -70,6 +70,37 @@ button { font-family:inherit; }
 .spacer { flex:1; }
 .status { font-size:11px; color:var(--dim); }
 
+/* toasts */
+.toast-wrap { position:fixed; top:14px; right:14px; z-index:300; display:flex; flex-direction:column; gap:8px; }
+.toast { display:flex; align-items:center; gap:10px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:5px; padding:8px 12px; font-size:12px; box-shadow:0 6px 24px rgba(0,0,0,.35); max-width:440px; }
+.toast.error { border-left-color:var(--red); }
+/* editor empty state */
+.empty-state { position:absolute; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; gap:8px; background:var(--bg); z-index:5; color:var(--dim); font-size:14px; }
+.empty-state.show { display:flex; }
+/* status bar */
+.statusbar { display:flex; align-items:center; gap:14px; padding:3px 12px; background:var(--surface); border-top:1px solid var(--border); font-size:11px; color:var(--dim); flex-shrink:0; }
+.statusbar .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--dim); margin-right:5px; vertical-align:middle; }
+.statusbar .dot.ok { background:var(--green); } .statusbar .dot.bad { background:var(--red); }
+.statusbar .sb-btn { background:none; border:none; color:var(--dim); cursor:pointer; font-size:11px; padding:0; font-family:inherit; }
+.statusbar .sb-btn:hover { color:var(--text); }
+.statusbar .sb-r { margin-left:auto; }
+/* gear popover */
+.gear-wrap { position:relative; }
+.popover { position:absolute; top:calc(100% + 6px); right:0; background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:12px; display:none; flex-direction:column; gap:10px; z-index:150; min-width:220px; box-shadow:0 8px 30px rgba(0,0,0,.4); }
+.popover.open { display:flex; }
+.popover label { font-size:11px; color:var(--dim); display:block; margin-bottom:3px; }
+.popover select { width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:4px 6px; border-radius:4px; font-size:12px; outline:none; }
+/* output meta + problems */
+.out-meta { margin-left:auto; font-size:11px; color:var(--dim); padding:0 8px; white-space:nowrap; }
+.prob-item { display:flex; gap:8px; padding:4px 2px; cursor:pointer; border-bottom:1px solid var(--border); font-size:12px; font-family:'JetBrains Mono',monospace; }
+.prob-item:hover { color:var(--accent); }
+.prob-item .sev { width:14px; text-align:center; flex-shrink:0; }
+/* input tab */
+#stdinArea { width:100%; height:100%; background:var(--bg); color:var(--text); border:none; outline:none; resize:none; padding:9px 13px; font-family:'JetBrains Mono','Fira Code',monospace; font-size:12px; box-sizing:border-box; }
+/* icons + focus */
+.btn svg, .mini-btn svg, .tree-toggle svg, .statusbar svg { vertical-align:-2px; }
+.btn:focus-visible, .toolbar select:focus-visible, .popover select:focus-visible, .tab:focus-visible, .out-tab:focus-visible, .mini-btn:focus-visible, .tree-toggle:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+
 /* File tabs */
 .tabs { display:flex; background:var(--surface); border-bottom:1px solid var(--border); overflow-x:auto; min-height:30px; }
 .tab { padding:5px 10px; font-size:12px; cursor:pointer; color:var(--dim); border-right:1px solid var(--border); display:flex; align-items:center; gap:6px; white-space:nowrap; }
@@ -90,9 +121,7 @@ button { font-family:inherit; }
 .out-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
 .out-content { flex:1; overflow:auto; padding:9px 13px; font-family:'JetBrains Mono','Fira Code',monospace; font-size:12px; white-space:pre-wrap; line-height:1.5; }
 .err { color:var(--red); } .ok { color:var(--green); }
-.stdin-wrap { display:flex; align-items:center; gap:6px; padding:4px 10px; border-top:1px solid var(--border); }
-.stdin-wrap input { flex:1; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 8px; border-radius:3px; font-size:12px; outline:none; }
-.stdin-wrap label { font-size:11px; color:var(--dim); white-space:nowrap; }
+/* (stdin moved into the Input tab of the bottom panel) */
 .resize-handle { height:4px; cursor:ns-resize; background:var(--border); flex-shrink:0; }
 .resize-handle:hover { background:var(--accent); }
 
@@ -244,56 +273,78 @@ button { font-family:inherit; }
       <button class="btn btn-primary" style="flex:1" onclick="createProject()">+ New Project</button>
     </div>
     <div class="proj-list" id="projList"></div>
-    <div class="trash-head" id="trashHead" onclick="toggleTrash()">
-      <span>🗑 Trash</span><span id="trashCount" class="std"></span><span class="caret" id="trashCaret">▸</span>
+    <div class="trash-head" id="trashHead" onclick="toggleTrash()" title="Deleted projects — restore or purge">
+      <span>Trash</span><span id="trashCount" class="std"></span><span class="caret" id="trashCaret">▸</span>
     </div>
     <div class="trash-body" id="trashBody"></div>
   </div>
 
   <div class="main">
     <div class="toolbar">
-      <input type="text" id="titleInput" placeholder="Project name..." value="Untitled">
-      <select id="stdSelect" onchange="onStdChange()">
+      <input type="text" id="titleInput" placeholder="No project open" value="Untitled" disabled aria-label="Project name">
+      <select id="stdSelect" onchange="onStdChange()" title="C++ standard" aria-label="C++ standard">
         <option value="c++17" selected>C++17</option>
         <option value="c++20">C++20</option>
         <option value="c++23">C++23</option>
       </select>
-      <select id="themeSelect" onchange="onThemeChange()" title="Color scheme"></select>
-      <select id="fontSelect" onchange="onFontChange()" title="Font size"></select>
-      <select id="indentSelect" onchange="onIndentChange()" title="Indent size"></select>
-      <button class="btn btn-warn" id="formatBtn" onclick="formatCode()">🎨 Format</button>
-      <button class="btn btn-ghost" onclick="saveActiveFile()">💾 Save</button>
+      <button class="btn btn-ghost" id="formatBtn" data-icon="wand" onclick="formatCode()" title="Format this file (Shift+Alt+F)">Format</button>
+      <button class="btn btn-ghost" id="saveBtn" data-icon="save" onclick="saveActiveFile()" title="Save (Ctrl+S)">Save</button>
       <span class="status" id="statusText"></span>
       <span class="spacer"></span>
-      <button class="btn btn-ghost" onclick="showAdmin()">🎓 Admin</button>
-      <button class="btn btn-primary" onclick="showSubmit()">📤 Submit</button>
-      <button class="btn btn-ghost" onclick="showVscode()">🔗 VS Code</button>
-      <button class="btn btn-ghost" id="docsBtn" onclick="toggleDocs()" title="cppreference.com">📚</button>
-      <button class="btn" id="dbgBtn" onclick="debugToggle()" title="Debug with lldb (F5)">🐞 Debug</button>
-      <button class="btn btn-green" id="runBtn" onclick="runCode()">▶ Run</button>
-      <button class="btn" id="rebuildBtn" onclick="runCode(true)" title="make clean && make && run (Shift+Ctrl+Enter)">🔄 Rebuild</button>
+      <div class="gear-wrap">
+        <button class="btn btn-ghost" id="gearBtn" onclick="toggleGear(event)" title="Editor settings (theme, font, indent)" aria-label="Editor settings" aria-haspopup="true">⚙</button>
+        <div class="popover" id="settingsPop">
+          <div><label for="themeSelect">Theme</label><select id="themeSelect" onchange="onThemeChange()"></select></div>
+          <div><label for="fontSelect">Editor font size</label><select id="fontSelect" onchange="onFontChange()"></select></div>
+          <div><label for="indentSelect">Indent width (spaces)</label><select id="indentSelect" onchange="onIndentChange()"></select></div>
+        </div>
+      </div>
+      <button class="btn btn-ghost" data-icon="code" onclick="showVscode()" title="Open this project in VS Code over Remote-SSH">VS Code</button>
+      <button class="btn btn-ghost" id="docsBtn" data-icon="book" onclick="toggleDocs()" title="cppreference.com in a side panel">Docs</button>
+      <button class="btn btn-ghost" data-icon="grad" onclick="showAdmin()" title="Classes, assignments and marking">Admin</button>
+      <button class="btn btn-ghost" id="dbgBtn" data-icon="bug" onclick="debugToggle()" title="Debug with lldb (F5)">Debug</button>
+      <button class="btn btn-ghost" id="rebuildBtn" data-icon="refresh" onclick="runCode(true)" title="Clean rebuild and run (Shift+Ctrl+Enter)">Rebuild</button>
+      <button class="btn btn-green" id="runBtn" data-icon="play" onclick="runCode()" title="Compile and run (Ctrl+Enter)">Run</button>
+      <button class="btn btn-primary" id="submitBtn" data-icon="upload" onclick="showSubmit()" title="Submit a snapshot of this project for marking">Submit</button>
     </div>
-    <div class="tabs" id="tabs"></div>
-    <div class="editor-wrap"><textarea id="editor"></textarea></div>
+    <div class="tabs" id="tabs" role="tablist" aria-label="Open files"></div>
+    <div class="editor-wrap"><textarea id="editor"></textarea>
+      <div class="empty-state" id="emptyState">
+        <div style="font-size:16px;">No project open</div>
+        <button class="btn btn-primary" data-icon="plus" onclick="createProject()">New Project</button>
+        <div style="font-size:12px;">…or pick one from the sidebar</div>
+      </div>
+    </div>
     <div class="resize-handle" id="resizeHandle"></div>
     <div class="output-panel" id="outputPanel">
-      <div class="out-tabs">
-        <span class="out-tab active" data-tab="output" onclick="switchOutTab('output')">Output</span>
-        <span class="out-tab" data-tab="compile" onclick="switchOutTab('compile')">Compile Log</span>
+      <div class="out-tabs" role="tablist" aria-label="Program output">
+        <span class="out-tab active" role="tab" tabindex="0" data-tab="output" onclick="switchOutTab('output')">Output</span>
+        <span class="out-tab" role="tab" tabindex="0" data-tab="compile" onclick="switchOutTab('compile')">Compile Log</span>
+        <span class="out-tab" role="tab" tabindex="0" data-tab="input" onclick="switchOutTab('input')">Input</span>
+        <span class="out-tab" role="tab" tabindex="0" data-tab="problems" onclick="switchOutTab('problems')">Problems</span>
+        <span class="out-meta" id="outMeta"></span>
       </div>
-      <div class="out-content" id="outputContent"><span style="color:var(--dim)">Click ▶ Run to compile &amp; execute.</span></div>
-      <div class="stdin-wrap"><label>stdin:</label><input type="text" id="stdinInput" placeholder="Input for program (optional)"></div>
+      <div class="out-content" id="outputContent"><span style="color:var(--dim)">Click Run (Ctrl+Enter) to compile &amp; execute.</span></div>
     </div>
     <div class="debug-toolbar" id="debugToolbar">
-      <button class="btn btn-green" id="dbgStart" onclick="debugStart()" title="Start / restart debug (F5)">▶ Start</button>
-      <button class="btn" id="dbgContinue" onclick="debugCmd('Continue')" title="Continue (resume)">⏯ Continue</button>
-      <button class="btn" id="dbgNext" onclick="debugCmd('Next')" title="Step over">⤓ Next</button>
-      <button class="btn" id="dbgStepIn" onclick="debugCmd('StepIn')" title="Step into">↧ Step In</button>
-      <button class="btn" id="dbgStepOut" onclick="debugCmd('StepOut')" title="Step out">↥ Step Out</button>
-      <button class="btn" id="dbgStop" onclick="debugCmd('Stop')" title="Stop debugging">⏹ Stop</button>
+      <button class="btn btn-green" id="dbgStart" data-icon="play" onclick="debugStart()" title="Start / restart debug (F5)">Start</button>
+      <button class="btn" id="dbgContinue" data-icon="play" onclick="debugCmd('Continue')" title="Continue (resume)">Continue</button>
+      <button class="btn" id="dbgNext" data-icon="next" onclick="debugCmd('Next')" title="Step over">Next</button>
+      <button class="btn" id="dbgStepIn" data-icon="stepin" onclick="debugCmd('StepIn')" title="Step into">Step In</button>
+      <button class="btn" id="dbgStepOut" data-icon="stepout" onclick="debugCmd('StepOut')" title="Step out">Step Out</button>
+      <button class="btn" id="dbgStop" data-icon="stop" onclick="debugCmd('Stop')" title="Stop debugging">Stop</button>
       <span class="debug-status" id="debugStatus"></span>
     </div>
     <div class="debug-output" id="debugOutput"></div>
+    <div class="statusbar">
+      <span title="Backend / sandbox status"><span class="dot" id="sbBackend"></span>backend</span>
+      <span title="clangd language server"><span class="dot" id="sbLsp"></span>clangd</span>
+      <button class="sb-btn" id="sbDiags" onclick="switchOutTab('problems')" title="Show Problems">✓ no problems</button>
+      <span id="sbPos">Ln 1, Col 1</span>
+      <span id="sbIndent">Spaces: 2</span>
+      <span id="sbStd">c++17</span>
+      <span class="sb-r" id="sbSaved"></span>
+    </div>
   </div>
 
   <div class="tree-panel" id="treePanel">
@@ -306,9 +357,9 @@ button { font-family:inherit; }
     <div class="tree-head">
       <span id="treeTitle">Files</span>
       <div style="display:flex; gap:6px;">
-        <button class="tree-toggle" onclick="newFile()" title="New file">📄</button>
-        <button class="tree-toggle" onclick="newFolder()" title="New folder">📁</button>
-        <button class="tree-toggle" onclick="toggleTree()" title="Collapse">◀</button>
+        <button class="tree-toggle" onclick="newFile()" title="New file" aria-label="New file">＋</button>
+        <button class="tree-toggle" onclick="newFolder()" title="New folder" aria-label="New folder">⊞</button>
+        <button class="tree-toggle" onclick="toggleTree()" title="Collapse files panel" aria-label="Collapse files panel">◀</button>
       </div>
     </div>
     <div class="tree-body" id="treeBody"><div class="tree-empty">Open a project</div></div>
@@ -318,9 +369,9 @@ button { font-family:inherit; }
 
 <div class="docs-panel" id="docsPanel">
   <div class="docs-head">
-    <span>📚 cppreference</span>
-    <button class="tree-toggle" onclick="docsHome()" title="Home — https://www.cppreference.com">🏠</button>
-    <button class="tree-toggle" onclick="toggleDocs()" title="Close panel">▶</button>
+    <span>cppreference</span>
+    <button class="tree-toggle" data-icon="home" onclick="docsHome()" title="Home — https://www.cppreference.com" aria-label="Docs home"></button>
+    <button class="tree-toggle" data-icon="chevron" onclick="toggleDocs()" title="Close panel" aria-label="Close docs panel"></button>
   </div>
   <div class="docs-bar">
     <input id="docsUrl" type="text" placeholder="cppreference URL or search term" onkeydown="if(event.key==='Enter')docsGo()">
@@ -330,9 +381,10 @@ button { font-family:inherit; }
   <iframe id="docsFrame" title="cppreference" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
 </div>
 
+<div class="toast-wrap" id="toastWrap"></div>
 <div class="modal-bg" id="vscodeModal" onclick="if(event.target===this)hideVscode()">
   <div class="modal">
-    <h2>🔗 Open in VS Code (Remote-SSH)</h2>
+    <h2>Open in VS Code (Remote-SSH)</h2>
     <div class="row"><b>SSH host:</b> <input id="vcHostInput" oninput="regenVscode()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:12px;width:200px;outline:none;"> <span id="vcIps" style="font-size:11px;color:var(--dim);"></span></div>
     <div class="row"><b>User:</b> <span id="vcUser"></span></div>
     <div class="row"><b>Project path:</b> <span id="vcPath"></span></div>
@@ -348,9 +400,10 @@ button { font-family:inherit; }
 
 <div class="modal-bg" id="submitModal" onclick="if(event.target===this)hideSubmit()">
   <div class="modal">
-    <h2>📤 Submit Project</h2>
+    <h2>Submit Project</h2>
     <div class="row"><b>Project:</b> <span id="subProject"></span></div>
     <div class="row"><b>Key:</b> <input id="subKeyInput" placeholder="paste your submission key" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:12px;width:260px;outline:none;"></div>
+    <div class="row" id="subFiles" style="line-height:1.9;"></div>
     <div class="row" id="subResult" style="min-height:18px;"></div>
     <div style="display:flex; gap:8px; margin-top:8px;">
       <button class="btn btn-primary" id="subBtn" onclick="doSubmit()">Submit</button>
@@ -369,7 +422,7 @@ button { font-family:inherit; }
 <div class="admin-bg" id="adminPanel">
   <div class="admin-wrap">
     <div class="admin-head">
-      <h2>🎓 Admin — Classes, Students &amp; Keys</h2>
+      <h2>Admin — Classes, Students &amp; Keys</h2>
       <button class="btn btn-ghost" onclick="hideAdmin()">✕ Close</button>
     </div>
     <div class="admin-body">
@@ -449,9 +502,9 @@ function cppMode(std){ return { name:'text/x-c++src', keywords: kwObj(std), type
 
 // ── Themes ───────────────────────────────────────────────────────────────
 const THEMES = {
-  'material-ocean': { kind:'dark', cm:'material-ocean', vars:{'--bg':'#0f111a','--surface':'#1a1d2e','--surface2':'#252840','--border':'#2d3154','--text':'#cdd6f4','--dim':'#6c7086','--accent':'#89b4fa','--green':'#a6e3a1','--red':'#f38ba8','--yellow':'#f9e2af'} },
-  'dracula':        { kind:'dark', cm:'dracula',        vars:{'--bg':'#282a36','--surface':'#21222c','--surface2':'#343746','--border':'#44475a','--text':'#f8f8f2','--dim':'#6272a4','--accent':'#bd93f9','--green':'#50fa7b','--red':'#ff5555','--yellow':'#f1fa8c'} },
-  'blackboard':     { kind:'dark', cm:'blackboard',     vars:{'--bg':'#0c1021','--surface':'#15192b','--surface2':'#1f2438','--border':'#2a3050','--text':'#e8e8e8','--dim':'#5f6a8a','--accent':'#7aa2ff','--green':'#7fd884','--red':'#ff6b6b','--yellow':'#ffd866'} },
+  'material-ocean': { kind:'dark', cm:'material-ocean', vars:{'--bg':'#0f111a','--surface':'#1a1d2e','--surface2':'#252840','--border':'#2d3154','--text':'#cdd6f4','--dim':'#8f93a8','--accent':'#89b4fa','--green':'#a6e3a1','--red':'#f38ba8','--yellow':'#f9e2af'} },
+  'dracula':        { kind:'dark', cm:'dracula',        vars:{'--bg':'#282a36','--surface':'#21222c','--surface2':'#343746','--border':'#44475a','--text':'#f8f8f2','--dim':'#8b93b8','--accent':'#bd93f9','--green':'#50fa7b','--red':'#ff5555','--yellow':'#f1fa8c'} },
+  'blackboard':     { kind:'dark', cm:'blackboard',     vars:{'--bg':'#0c1021','--surface':'#15192b','--surface2':'#1f2438','--border':'#2a3050','--text':'#e8e8e8','--dim':'#8a95b5','--accent':'#7aa2ff','--green':'#7fd884','--red':'#ff6b6b','--yellow':'#ffd866'} },
   'eclipse':        { kind:'light', cm:'eclipse',       vars:{'--bg':'#f7f7f7','--surface':'#efefef','--surface2':'#e2e2e2','--border':'#cfcfcf','--text':'#1b1b1b','--dim':'#777','--accent':'#1a73e8','--green':'#1e8e3e','--red':'#d93025','--yellow':'#b26a00'} },
   'idea':           { kind:'light', cm:'idea',          vars:{'--bg':'#ffffff','--surface':'#f4f4f6','--surface2':'#e6e6ea','--border':'#d4d4d8','--text':'#1e1e1e','--dim':'#808088','--accent':'#2a7de1','--green':'#21a766','--red':'#d23e3e','--yellow':'#c47f00'} },
   'default':        { kind:'light', cm:'default',       vars:{'--bg':'#ffffff','--surface':'#f5f5f5','--surface2':'#e8e8e8','--border':'#d0d0d0','--text':'#222','--dim':'#888','--accent':'#0a66c2','--green':'#097d3a','--red':'#c0271c','--yellow':'#9a6a00'} },
@@ -476,23 +529,50 @@ let editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
 
 // (state hoisted above editor init)
 
-// ── API ──────────────────────────────────────────────────────────────────
+// ── API (network failure → toast + Retry; the call resumes when retried) ─
 async function api(method, url, body){
   const o={method,headers:{}};
   if(body!==undefined){ o.headers['Content-Type']='application/json'; o.body=JSON.stringify(body); }
-  const r=await fetch(url,o);
+  let r;
+  try{ r=await fetch(url,o); }
+  catch(_){
+    return new Promise((resolve,reject)=>{
+      toast("Can't reach the CPPBox backend — is the app still running?", 'error', {
+        label:'Retry',
+        fn:async()=>{ try{ resolve(await readResp(await fetch(url,o))); }catch(e2){ reject(e2); } },
+      });
+    });
+  }
+  return readResp(r);
+}
+async function readResp(r){
   if(!r.ok){ let e; try{e=(await r.json()).detail;}catch(_){e=r.statusText;} throw new Error(e); }
   return r.json();
 }
 
 // ── Projects ─────────────────────────────────────────────────────────────
 async function loadProjects(){ projects=await api('GET','/api/projects'); renderProjects(); }
+// single source of truth: `project`. Drives disabled buttons + empty state.
+function updateProjectState(){
+  const has=!!project;
+  document.getElementById('titleInput').disabled=!has;
+  document.getElementById('titleInput').placeholder=has?'Project name…':'No project open';
+  for(const id of ['formatBtn','saveBtn','runBtn','rebuildBtn','dbgBtn','submitBtn']){
+    const b=document.getElementById(id); if(b)b.disabled=!has;
+  }
+  document.getElementById('emptyState').classList.toggle('show',!has);
+  if(!has){ document.getElementById('treeTitle').textContent='Files'; document.getElementById('treeBody').innerHTML='<div class="tree-empty">Open a project</div>'; }
+}
 function renderProjects(){
   const el=document.getElementById('projList');
   if(!projects.length){ el.innerHTML='<div style="padding:24px 12px;color:var(--dim);font-size:12px;text-align:center">No projects yet.<br>Click + New Project</div>'; return; }
   el.innerHTML=projects.map(p=>`
     <div class="proj-item ${project&&p.id===project.id?'active':''}" onclick="openProject('${p.id}')">
-      <div class="t"><span>${p.local_path?'💻 ':''}${esc(p.title)}</span><button class="del" onclick="event.stopPropagation();deleteProject('${p.id}')">×</button></div>
+      <div class="t"><span>${p.local_path?icon('folder',11)+' ':''}${esc(p.title)}</span>
+        <span style="display:flex;gap:2px;">
+          <button class="del" aria-label="Rename project" title="Rename" onclick="event.stopPropagation();renameProject('${p.id}')">✎</button>
+          <button class="del" aria-label="Delete project" title="Move to Trash" onclick="event.stopPropagation();deleteProject('${p.id}')">✕</button>
+        </span></div>
       <div class="std">${p.cpp_standard} · ${timeAgo(p.updated_at)}</div>
     </div>`).join('');
 }
@@ -508,12 +588,13 @@ async function createProject(){
 async function openProject(id){
   try{
     if(activeIdx>=0 && openTabs[activeIdx] && openTabs[activeIdx].dirty) await saveActiveFile();
+    flushStdin();
     project=await api('GET',`/api/projects/${id}`);
   document.getElementById('titleInput').value=project.title;
   document.getElementById('stdSelect').value=project.cpp_standard;
   applyStd(project.cpp_standard);
   document.getElementById('treeTitle').textContent='Files · '+project.title;
-  if(project.local_path) document.getElementById('treeTitle').textContent+=' 📁'+project.local_path;
+  if(project.local_path) document.getElementById('treeTitle').textContent+=' · '+project.local_path;
   openTabs=[]; activeIdx=-1; renderTabs();
   debugBps={}; setDebugLine(null);
   await loadTree();
@@ -521,22 +602,37 @@ async function openProject(id){
   const mainPath=findFile(tree,'main.cpp');
   if(mainPath) await openFile(mainPath); else { editor.setValue(''); setStatus(''); }
   renderProjects();
+  updateProjectState();
+  api('PUT','/api/settings',{last_project_id:id}).catch(()=>{});
+  }catch(e){ flashErr(e); }
+}
+async function renameProject(id){
+  const p=projects.find(x=>x.id===id); if(!p)return;
+  const t=prompt('Rename project:',p.title); if(!t||t===p.title)return;
+  try{
+    await api('PUT',`/api/projects/${id}`,{title:t});
+    p.title=t;
+    if(project&&project.id===id){ project.title=t; document.getElementById('titleInput').value=t; document.getElementById('treeTitle').textContent='Files · '+t; }
+    renderProjects();
   }catch(e){ flashErr(e); }
 }
 async function deleteProject(id){
-  if(!confirm('Move this project to Trash? You can restore or permanently delete it later.'))return;
+  const p=projects.find(x=>x.id===id);
+  if(!confirm(`Move "${p?p.title:id}" to Trash? You can restore it from the sidebar.`))return;
   try{
     await api('DELETE',`/api/projects/${id}`);
-    if(project&&project.id===id){ project=null; openTabs=[]; activeIdx=-1; renderTabs(); editor.setValue(''); loadTreeRefresh(); }
+    if(project&&project.id===id){ project=null; openTabs=[]; activeIdx=-1; renderTabs(); editor.setValue(''); loadTreeRefresh(); updateProjectState(); }
     await loadProjects(); await loadTrash();
-    setStatus('Moved to Trash');
+    toast(`“${p?p.title:id}” moved to Trash`, 'info', {label:'Undo', fn:async()=>{
+      try{ await api('POST',`/api/projects/${id}/restore`); await loadProjects(); await loadTrash(); }
+      catch(e){ flashErr(e); }
+    }});
   }catch(e){ flashErr(e); }
 }
 
 // ── Trash ────────────────────────────────────────────────────────────────
 let trash=[];
-async function loadTrash(){ try{ trash=await api('GET','/api/trash'); renderTrash(); }catch(e){ flashErr(e); } }
-function renderTrash(){
+async function loadTrash(){ try{ trash=await api('GET','/api/trash'); renderTrash(); }catch(e){ flashErr(e); } }function renderTrash(){
   document.getElementById('trashCount').textContent=trash.length?('('+trash.length+')'):'';
   const el=document.getElementById('trashBody');
   if(!trash.length){ el.innerHTML='<div class="trash-item" style="color:var(--dim)">Trash is empty</div>'; return; }
@@ -545,8 +641,8 @@ function renderTrash(){
       <div class="t" onclick="openProject('${p.id}')" title="Click to review files"><span>${esc(p.title)}</span></div>
       <div class="meta">${p.cpp_standard} · deleted ${timeAgo(p.deleted_at)}</div>
       <div class="acts" style="margin-top:4px;">
-        <button class="mini-btn" onclick="restoreProject('${p.id}')">↩ Restore</button>
-        <button class="mini-btn del" onclick="purgeProject('${p.id}')">🗑 Delete forever</button>
+        <button class="mini-btn" data-icon="restore" onclick="restoreProject('${p.id}')">Restore</button>
+        <button class="mini-btn del" data-icon="trash" onclick="purgeProject('${p.id}')">Delete forever</button>
       </div>
     </div>`).join('');
 }
@@ -582,14 +678,14 @@ function renderNodes(nodes, depth=0){
       const open=expandedDirs.has(n.path);
       const kids=n.children&&n.children.length?renderNodes(n.children,depth+1):'<div class="tree-empty" style="padding:2px 0 2px '+(20+depth*12)+'px">(empty)</div>';
       return `<div class="tree-row" style="${pad}" data-path="${esc(n.path)}" onclick="toggleFolder(this)">
-        <span class="ico">${open?'📂':'📁'}</span><span>${esc(n.name)}</span>
-        <span class="acts"><button onclick="event.stopPropagation();newFile('${esc(n.path)}')" title="New file">➕</button><button onclick="event.stopPropagation();renameNode('${esc(n.path)}')" title="Rename">✏️</button><button onclick="event.stopPropagation();deleteNode('${esc(n.path)}')" title="Delete">🗑️</button></span>
+        <span class="ico">${open?icon('folderopen',13):icon('folder',13)}</span><span>${esc(n.name)}</span>
+        <span class="acts"><button aria-label="New file here" onclick="event.stopPropagation();newFile('${esc(n.path)}')" title="New file">${icon('fileplus',12)}</button><button aria-label="Rename" onclick="event.stopPropagation();renameNode('${esc(n.path)}')" title="Rename">${icon('pencil',12)}</button><button aria-label="Delete" onclick="event.stopPropagation();deleteNode('${esc(n.path)}')" title="Delete">${icon('trash',12)}</button></span>
       </div><div class="folder-kids" style="display:${open?'block':'none'}">${kids}</div>`;
     }
     const active=openTabs[activeIdx]&&openTabs[activeIdx].path===n.path?'active':'';
     return `<div class="tree-row ${active}" style="${pad}" onclick="openFile('${esc(n.path)}')">
-      <span class="ico">📄</span><span>${esc(n.name)}</span>
-      <span class="acts"><button onclick="event.stopPropagation();renameNode('${esc(n.path)}')" title="Rename">✏️</button><button onclick="event.stopPropagation();deleteNode('${esc(n.path)}')" title="Delete">🗑️</button></span>
+      <span class="ico">${icon('file',13)}</span><span>${esc(n.name)}</span>
+      <span class="acts"><button aria-label="Rename" onclick="event.stopPropagation();renameNode('${esc(n.path)}')" title="Rename">${icon('pencil',12)}</button><button aria-label="Delete" onclick="event.stopPropagation();deleteNode('${esc(n.path)}')" title="Delete">${icon('trash',12)}</button></span>
     </div>`;
   }).join('');
 }
@@ -598,7 +694,7 @@ function toggleFolder(row){
   const open=kids.style.display!=='block';
   kids.style.display=open?'block':'none';
   if(open)expandedDirs.add(p); else expandedDirs.delete(p);
-  const ico=row.querySelector('.ico'); if(ico)ico.textContent=open?'📂':'📁';
+  const ico=row.querySelector('.ico'); if(ico)ico.innerHTML=open?icon('folderopen',13):icon('folder',13);
 }
 function expandAncestors(path){
   let parts=(path||'').split('/'); parts.pop();
@@ -719,9 +815,9 @@ function closeTab(i,e){
 }
 function renderTabs(){
   document.getElementById('tabs').innerHTML=openTabs.map((t,i)=>`
-    <div class="tab ${i===activeIdx?'active':''} ${t.dirty?'dirty':''}" onclick="showTab(${i})">
+    <div class="tab ${i===activeIdx?'active':''} ${t.dirty?'dirty':''}" role="tab" tabindex="${i===activeIdx?'0':'-1'}" aria-selected="${i===activeIdx}" onclick="showTab(${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showTab(${i});}">
       <span class="dot"></span><span>${esc(t.path.split('/').pop())}</span>
-      <span class="x" onclick="closeTab(${i},event)">×</span>
+      <span class="x" role="button" aria-label="Close tab" onclick="closeTab(${i},event)">×</span>
     </div>`).join('');
 }
 async function saveActiveFile(){
@@ -737,6 +833,7 @@ async function saveActiveFile(){
     const t=openTabs[activeIdx];
     await api('PUT',`/api/projects/${project.id}/file`,{path:t.path,content:t.content});
     t.dirty=false; renderTabs(); setStatus(cpp?'Saved & formatted ✓':'Saved ✓');
+    const n=new Date(); document.getElementById('sbSaved').textContent='Saved · '+String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');
   }catch(e){ flashErr(e); }
 }
 function scheduleAutoSave(){ if(!project||activeIdx<0)return; clearTimeout(autoSaveTimer); autoSaveTimer=setTimeout(saveActiveFile,1200); }
@@ -748,7 +845,10 @@ async function onStdChange(){
   refreshLint();
   if(project){ await api('PUT',`/api/projects/${project.id}`,{cpp_standard:document.getElementById('stdSelect').value}); renderProjects(); }
 }
-function applyStd(std){ editor.setOption('mode', cppMode(std)); document.getElementById('clangVer').textContent='clangd · '+std; }
+function applyStd(std){ editor.setOption('mode', cppMode(std)); document.getElementById('clangVer').textContent='clangd'; document.getElementById('sbStd').textContent=std; }
+
+function toggleGear(e){ e.stopPropagation(); document.getElementById('settingsPop').classList.toggle('open'); }
+document.addEventListener('click',e=>{ const p=document.getElementById('settingsPop'); if(p&&p.classList.contains('open')&&!e.target.closest('.gear-wrap'))p.classList.remove('open'); });
 
 // ── Themes ───────────────────────────────────────────────────────────────
 function buildThemeSelect(){
@@ -785,19 +885,9 @@ function buildIndentSelect(){
   applyIndent(2);
 }
 function applyIndent(n){ editor.setOption('indentUnit',n); editor.setOption('tabSize',n); }
-function onIndentChange(){ const n=parseInt(document.getElementById('indentSelect').value)||2; applyIndent(n); persistSettings(); }
+function onIndentChange(){ const n=parseInt(document.getElementById('indentSelect').value)||2; applyIndent(n); document.getElementById('sbIndent').textContent='Spaces: '+n; persistSettings(); }
 
 // ── Settings: persisted by the backend in ~/.cppbox/cppbox.yaml ─────────
-async function loadSettings(){
-  try{
-    const s=await api('GET','/api/settings');
-    if(THEMES[s.theme]){ document.getElementById('themeSelect').value=s.theme; applyTheme(s.theme); }
-    if(FONT_SIZES.includes(s.font_size)){ document.getElementById('fontSelect').value=s.font_size; applyFontSize(s.font_size); }
-    if(INDENTS.includes(s.indent)){ document.getElementById('indentSelect').value=s.indent; applyIndent(s.indent); }
-    const stdSel=document.getElementById('stdSelect');
-    if([...stdSel.options].some(o=>o.value===s.std)){ stdSel.value=s.std; applyStd(s.std); }
-  }catch(e){}
-}
 function persistSettings(){
   api('PUT','/api/settings',{
     theme:document.getElementById('themeSelect').value,
@@ -809,22 +899,42 @@ function persistSettings(){
 function onThemeChange(){ const id=document.getElementById('themeSelect').value; applyTheme(id); persistSettings(); }
 
 // ── Run ──────────────────────────────────────────────────────────────────
+let outHtml='', compileHtml='', stdinTimer=null;
+function currentStdin(){ const el=document.getElementById('stdinArea'); return el?el.value:''; }
+function flushStdin(){
+  const el=document.getElementById('stdinArea');
+  if(!el||!project)return;
+  const v=el.value; if(v===(project.stdin||''))return;
+  project.stdin=v;
+  clearTimeout(stdinTimer);
+  return api('PUT',`/api/projects/${project.id}`,{stdin:v}).catch(()=>{});
+}
 async function runCode(rebuild=false){
   if(!project){setStatus('Open a project first');return;}
   await saveActiveFile();
-  const stdin=document.getElementById('stdinInput').value;
-  const b=document.getElementById(rebuild?'rebuildBtn':'runBtn'), o=document.getElementById('outputContent');
-  const label=rebuild?'🔄 Rebuild':'▶ Run';
-  b.disabled=true; b.innerHTML='<span class="spinner"></span> '+(rebuild?'Rebuilding...':'Running...');
-  o.innerHTML='<span style="color:var(--dim)">'+(rebuild?'make clean &amp;&amp; make...':'Compiling...')+'</span>';
+  await flushStdin();
+  const stdin=currentStdin();
+  const b=document.getElementById(rebuild?'rebuildBtn':'runBtn'), meta=document.getElementById('outMeta');
+  const label=(rebuild?icon('refresh')+' Rebuild':icon('play')+' Run');
+  b.disabled=true; b.innerHTML='<span class="spinner"></span> '+(rebuild?'Rebuilding…':'Running…');
+  switchOutTab('output');
+  document.getElementById('outputContent').innerHTML='<span style="color:var(--dim)">'+(rebuild?'make clean &amp;&amp; make…':'Compiling…')+'</span>';
+  meta.textContent='';
+  const t0=performance.now();
   try{
     const res=await api('POST',`/api/projects/${project.id}/${rebuild?'rebuild':'run'}`,{stdin});
-    if(res.stage==='compile'&&!res.ok){ o.innerHTML=`<span class="err">Compilation failed:</span>\n${esc(res.compile_output)}`; switchOutTab('compile'); return; }
-    if(outTab==='compile'){ o.innerHTML=esc(res.compile_output||'(no warnings)'); }
-    else { o.innerHTML=res.run_output?esc(res.run_output):'<span class="ok">Program ran successfully (no output).</span>';
-      if(res.exit_code!==0&&!res.timed_out)o.innerHTML+=`\n\n<span class="err">Exit code: ${res.exit_code}</span>`;
-      if(res.timed_out)o.innerHTML+='\n\n<span class="err">⚠ Timed out</span>'; }
-  }catch(e){ o.innerHTML=`<span class="err">Error:</span> ${esc(e.message)}`; }
+    const secs=((performance.now()-t0)/1000).toFixed(2);
+    if(res.stage==='compile'&&!res.ok){
+      compileHtml=`<span class="err">Compilation failed:</span>\n${esc(res.compile_output)}`; outHtml='';
+      renderOutTab(); switchOutTab('compile'); return;
+    }
+    compileHtml=esc(res.compile_output||'(no output)');
+    outHtml=res.run_output?esc(res.run_output):'<span class="ok">Program ran successfully (no output).</span>';
+    if(res.exit_code!==0&&!res.timed_out)outHtml+=`\n\n<span class="err">Exit code: ${res.exit_code}</span>`;
+    if(res.timed_out)outHtml+='\n\n<span class="err">⚠ Timed out (30s limit)</span>';
+    meta.textContent=(res.timed_out?'timed out':'exit '+(res.exit_code!=null?res.exit_code:'?'))+' · '+secs+'s';
+    renderOutTab();
+  }catch(e){ outHtml=`<span class="err">Error:</span> ${esc(e.message)}`; renderOutTab(); }
   finally{ b.disabled=false; b.innerHTML=label; }
 }
 
@@ -840,7 +950,7 @@ async function formatCode(){
     if(res.formatted&&res.formatted!==code){ editor.setValue(res.formatted); if(openTabs[activeIdx])openTabs[activeIdx].dirty=true; renderTabs(); scheduleAutoSave(); setStatus('Formatted ✓'); }
     else setStatus('Already clean');
   }catch(e){setStatus('Format error');}
-  finally{ b.disabled=false; b.innerHTML='🎨 Format'; }
+  finally{ b.disabled=false; b.innerHTML=icon('wand')+' Format'; if(!project)b.disabled=true; }
 }
 function saveAndFormat(){ saveActiveFile(); if(isCppFile(activeFilePath())) setTimeout(formatCode,250); }
 
@@ -892,7 +1002,7 @@ function lspConnect(){
       const sync=await lspSend('$/sync',{std:document.getElementById('stdSelect').value, files:syncFiles()});
       lsp.workspace=sync.workspace;
       await lspSend('initialize',{processId:null,rootUri:'file://'+lsp.workspace,capabilities:{},initializationOptions:{fallbackFlags:['-std='+document.getElementById('stdSelect').value]}});
-      lspNotify('initialized',{}); lsp.ready=true; lspDidOpen(); setStatus('clangd ready');
+      lspNotify('initialized',{}); lsp.ready=true; lspDidOpen(); setStatus('clangd ready'); setDot('sbLsp','ok');
     }catch(e){console.warn('lsp init',e);}
   };
   lsp.ws.onmessage=ev=>{
@@ -902,9 +1012,11 @@ function lspConnect(){
       const uri=m.params&&m.params.uri;
       lspDiags[uri]=(m.params&&m.params.diagnostics)||[];
       if(uri===lsp.openUri && editor.performLint) editor.performLint();
+      updateDiagCounts();
+      if(outTab==='problems') renderOutTab();
     }
   };
-  lsp.ws.onclose=()=>{lsp.ready=false;lsp.openUri=null;setTimeout(lspConnect,1500);};
+  lsp.ws.onclose=()=>{lsp.ready=false;lsp.openUri=null;setDot('sbLsp','bad');setTimeout(lspConnect,1500);};
 }
 function syncFiles(){ return openTabs.map(t=>({name:(project?project.id+'/':'')+t.path, content:t.content})); }
 function lspDidOpen(){ if(!lsp.ready||activeIdx<0||!openTabs[activeIdx])return; lspSend('$/sync',{std:document.getElementById('stdSelect').value,files:syncFiles()}).then(r=>lsp.workspace=r.workspace); const path=openTabs[activeIdx].path; lsp.openUri=lspUri(path); lsp.version=1; lspNotify('textDocument/didOpen',{textDocument:{uri:lsp.openUri,languageId:'cpp',version:lsp.version,text:editor.getValue()}}); }
@@ -923,7 +1035,43 @@ function onEditorMouseMove(e){ if(!lsp.ready)return; clearTimeout(hoverTimer); h
 editor.on('scroll',()=>hoverEl.style.display='none');
 
 // ── Output tabs / resize ─────────────────────────────────────────────────
-function switchOutTab(t){ outTab=t; document.querySelectorAll('.out-tab').forEach(x=>x.classList.remove('active')); document.querySelector(`.out-tab[data-tab="${t}"]`).classList.add('active'); }
+function switchOutTab(t){
+  outTab=t; renderOutTab();
+  document.querySelectorAll('.out-tab').forEach(x=>{ const on=x.dataset.tab===t; x.classList.toggle('active',on); x.setAttribute('aria-selected',on); });
+}
+function renderOutTab(){
+  const o=document.getElementById('outputContent');
+  if(outTab==='input'){
+    o.innerHTML='<textarea id="stdinArea" placeholder="Standard input for the program — sent on the next Run" aria-label="Program standard input"></textarea>';
+    const ta=document.getElementById('stdinArea');
+    ta.value=(project&&project.stdin)||'';
+    ta.oninput=()=>{ if(!project)return; clearTimeout(stdinTimer); stdinTimer=setTimeout(flushStdin,600); };
+    return;
+  }
+  if(outTab==='problems'){
+    const items=problemsList();
+    o.innerHTML=items.length?items.map((d,i)=>
+      `<div class="prob-item" onclick="jumpToProblem(${i})"><span class="sev" style="color:${d.sev==='error'?'var(--red)':d.sev==='warning'?'var(--yellow)':'var(--dim)'}">${d.sev==='error'?'✕':d.sev==='warning'?'⚠':'ℹ'}</span><span style="color:var(--dim)">${esc(d.file)}:${d.line}:${d.col}</span><span style="flex:1">${esc(d.msg)}</span></div>`).join('')
+      :'<span style="color:var(--dim)">No problems. Diagnostics appear live as you type (clangd).</span>';
+    return;
+  }
+  o.innerHTML=outTab==='compile'?(compileHtml||'<span style="color:var(--dim)">Run once to see the compile command and warnings.</span>'):(outHtml||'<span style="color:var(--dim)">Click Run (Ctrl+Enter) to compile &amp; execute.</span>');
+}
+function problemsList(){
+  const out=[];
+  for(const uri in lspDiags)for(const d of lspDiags[uri]||[]){
+    if(!lsp.workspace||!project)continue;
+    const prefix='file://'+lsp.workspace+'/'+project.id+'/';
+    if(!uri.startsWith(prefix))continue;
+    const r=d.range||{}, s=r.start||{line:0,character:0};
+    out.push({file:uri.slice(prefix.length), line:s.line+1, col:s.character+1, sev:d.severity===1?'error':d.severity===2?'warning':'info', msg:d.message});
+  }
+  return out.sort((a,b)=>a.file.localeCompare(b.file)||a.line-b.line);
+}
+async function jumpToProblem(i){
+  const d=problemsList()[i]; if(!d)return;
+  try{ await openFile(d.file); editor.setCursor({line:d.line-1,ch:d.col-1}); editor.focus(); }catch(_){}
+}
 (function(){const h=document.getElementById('resizeHandle'),p=document.getElementById('outputPanel');let d=false;h.addEventListener('mousedown',e=>{d=true;e.preventDefault();});document.addEventListener('mousemove',e=>{if(!d)return;const hh=Math.max(80,Math.min(window.innerHeight-e.clientY-40,window.innerHeight*.5));p.style.height=hh+'px';});document.addEventListener('mouseup',()=>d=false);})();
 
 // ── VS Code modal ────────────────────────────────────────────────────────
@@ -953,10 +1101,19 @@ function regenVscode(){
 function hideVscode(){ document.getElementById('vscodeModal').classList.remove('show'); }
 
 // ── Submit modal ─────────────────────────────────────────────────────────
+function fileListFromTree(){
+  const out=[];
+  (function walk(n){ if(!n)return; if(n.type==='file')out.push(n.path); (n.children||[]).forEach(walk); })(tree);
+  return out;
+}
 function showSubmit(){
   if(!project){ setStatus('Open a project to submit'); return; }
   document.getElementById('subProject').textContent=project.title;
   document.getElementById('subResult').textContent='';
+  const files=fileListFromTree().filter(p=>!p.endsWith('Makefile')&&!p.endsWith('.clangd'));
+  document.getElementById('subFiles').innerHTML=files.length
+    ? `<span style="color:var(--dim)">This exact snapshot (${files.length} files) is what gets graded:</span><br>`+files.map(f=>`<span class="mfile">${esc(f)}</span>`).join('')
+    : '<span style="color:var(--red)">No files in this project.</span>';
   document.getElementById('subKeyInput').value=localStorage.getItem('cppbox_subkey')||'';
   document.getElementById('submitModal').classList.add('show');
 }
@@ -1325,7 +1482,50 @@ function updateAcSel(items){ items.forEach((el,i)=>el.classList.toggle('active',
 
 // ── Utils ────────────────────────────────────────────────────────────────
 function esc(s){const d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML;}
-function setStatus(m){document.getElementById('statusText').textContent=m;}
+
+// ── inline SVG icon set (no deps) ───────────────────────────────────────
+const ICONS={
+  play:'<path d="M7 5v14l12-7z"/>',
+  stop:'<rect x="7" y="7" width="10" height="10"/>',
+  bug:'<rect x="8" y="9" width="8" height="10" rx="4"/><path d="M12 9V6"/><path d="M9 6L7 4M15 6l2-2"/><path d="M8 12H5M8 16H5M16 12h3M16 16h3"/>',
+  wand:'<path d="M4 20L14 10"/><path d="M15 4v3M13.5 5.5h3M19 9v3M17.5 10.5h3"/>',
+  save:'<path d="M5 3h11l3 3v15H5z"/><path d="M8 3v5h7V3"/><rect x="8" y="13" width="8" height="5"/>',
+  refresh:'<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 3v6h-6"/>',
+  upload:'<path d="M12 16V4"/><path d="M6 10l6-6 6 6"/><path d="M4 20h16"/>',
+  code:'<path d="M8 6l-5 6 5 6"/><path d="M16 6l5 6-5 6"/>',
+  book:'<path d="M3 5c3-1 6-1 9 1 3-2 6-2 9-1v13c-3-1-6-1-9 1-3-2-6-2-9-1z"/><path d="M12 6v14"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  file:'<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/>',
+  folder:'<path d="M3 7l2-2h5l2 2h9v12H3z"/>',
+  fileplus:'<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/><path d="M12 11v6M9 14h6"/>',
+  folderplus:'<path d="M3 7l2-2h5l2 2h9v12H3z"/><path d="M12 11v6M9 14h6"/>',
+  pencil:'<path d="M17 3l4 4L8 20H4v-4z"/>',
+  home:'<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
+  folderopen:'<path d="M3 7l2-2h5l2 2h5v3H3z"/><path d="M3 10l2 9h14l2-9z"/>',
+  trash:'<path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/>',
+  chevron:'<path d="M9 6l6 6-6 6"/>',
+  next:'<path d="M6 4l8 8-8 8"/><path d="M18 4v16"/>',
+  stepin:'<path d="M12 4v12"/><path d="M8 12l4 4 4-4"/><path d="M5 20h14"/>',
+  stepout:'<path d="M12 20V8"/><path d="M8 12l4-4 4 4"/><path d="M5 20h14"/>',
+  restore:'<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
+  grad:'<path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5"/>',
+};
+function icon(n,s=13){ return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]||''}</svg>`; }
+(function hydrateIcons(){ document.querySelectorAll('[data-icon]').forEach(el=>{ el.insertAdjacentHTML('afterbegin', icon(el.dataset.icon)+' '); }); })();
+
+// ── toasts ───────────────────────────────────────────────────────────────
+function toast(msg, kind='info', action){
+  const w=document.getElementById('toastWrap');
+  const t=document.createElement('div'); t.className='toast'+(kind==='error'?' error':''); t.setAttribute('role','alert');
+  const s=document.createElement('span'); s.style.flex='1'; s.textContent=msg; t.appendChild(s);
+  if(action){ const b=document.createElement('button'); b.className='btn btn-ghost'; b.textContent=action.label; b.onclick=()=>{ t.remove(); action.fn(); }; t.appendChild(b); }
+  const x=document.createElement('button'); x.className='btn btn-ghost'; x.setAttribute('aria-label','Dismiss'); x.innerHTML='✕'; x.onclick=()=>t.remove(); t.appendChild(x);
+  w.appendChild(t);
+  setTimeout(()=>t.remove(), kind==='error'?9000:3500);
+}
+
+let statusTimer=null;
+function setStatus(m){document.getElementById('statusText').textContent=m; clearTimeout(statusTimer); if(m)statusTimer=setTimeout(()=>{document.getElementById('statusText').textContent='';},4000);}
 function flashErr(e){ const m=(e&&e.message)?e.message:String(e); setStatus('⚠ '+m); console.error('[CPPBox]', e); }
 window.addEventListener('unhandledrejection', ev=>{ flashErr(ev.reason); ev.preventDefault(); });
 window.addEventListener('error', ev=>{ if(ev.error)flashErr(ev.error); });
@@ -1357,7 +1557,7 @@ function updateDebugUi(){
   const t=document.getElementById('debugToolbar'); if(!t) return;
   const active=debugState!=='idle';
   t.style.display=active?'flex':'none';
-  document.getElementById('dbgBtn').textContent=active?'⏹ Stop Debug':'🐞 Debug';
+  document.getElementById('dbgBtn').innerHTML=active?icon('stop')+' Stop Debug':icon('bug')+' Debug';
   const p=document.getElementById('dbgPanel'); if(p) p.style.display=active?'block':'none';
   const st=document.getElementById('debugStatus');
   if(st) st.textContent=active?(debugState==='starting'?'compiling…':debugState==='stopped'?'paused':'running'):'';
@@ -1467,20 +1667,64 @@ function appendVar(v,container){
 
 // ── Editor events ────────────────────────────────────────────────────────
 editor.on('change',()=>{ if(activeIdx>=0&&openTabs[activeIdx]){ openTabs[activeIdx].dirty=true; openTabs[activeIdx].content=editor.getValue(); renderTabs(); scheduleAutoSave(); } lspDidChange(); });
+editor.on('cursorActivity',()=>{ const c=editor.getCursor(); document.getElementById('sbPos').textContent='Ln '+(c.line+1)+', Col '+(c.ch+1); });
 editor.on('mousemove',onEditorMouseMove);
 document.getElementById('titleInput').addEventListener('change',onTitleChange);
 window.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='f')e.preventDefault(); });
+
+// ── Status bar ───────────────────────────────────────────────────────────
+function setDot(id,cls){ const el=document.getElementById(id); if(el)el.className='dot '+(cls||''); }
+function updateDiagCounts(){
+  let e=0,w=0;
+  for(const u in lspDiags)for(const d of lspDiags[u]||[]){ if(d.severity===1)e++; else if(d.severity===2)w++; }
+  const el=document.getElementById('sbDiags');
+  el.textContent=(e?'✕ '+e:'')+(w?(e?' ':'')+'⚠ '+w:'')||'✓ no problems';
+  el.style.color=e?'var(--red)':w?'var(--yellow)':'';
+}
+async function pollBackend(){
+  try{ const s=await api('GET','/api/sandbox/status'); setDot('sbBackend', s.ready?'ok':'bad'); document.getElementById('sbBackend').parentElement.title=s.message||'backend'; }
+  catch(_){ setDot('sbBackend','bad'); }
+}
+pollBackend(); setInterval(pollBackend,15000);
+updateDiagCounts();
+
+// ── Tablist keyboard nav (editor tabs + output tabs) ─────────────────────
+function tablistKeys(rootSel, activate){
+  const root=document.querySelector(rootSel); if(!root)return;
+  root.addEventListener('keydown',e=>{
+    if(e.key!=='ArrowRight'&&e.key!=='ArrowLeft')return;
+    const tabs=[...root.querySelectorAll('[role=tab]')]; if(!tabs.length)return;
+    const i=tabs.indexOf(document.activeElement); if(i<0)return;
+    e.preventDefault();
+    const n=tabs[(i+(e.key==='ArrowRight'?1:tabs.length-1))%tabs.length];
+    n.focus(); activate(n);
+  });
+}
+tablistKeys('#tabs', t=>t.click());
+tablistKeys('.out-tabs', t=>switchOutTab(t.dataset.tab));
 
 // ── Init ─────────────────────────────────────────────────────────────────
 buildThemeSelect();
 buildFontSelect();
 buildIndentSelect();
 lspConnect();
-loadSettings();
-loadProjects().catch(e=>flashErr(new Error('Backend unreachable or stale (no /api/projects). Restart uvicorn to load new backend: '+e.message)));
+(async function init(){
+  try{
+    const s=await api('GET','/api/settings');
+    if(THEMES[s.theme]){ document.getElementById('themeSelect').value=s.theme; applyTheme(s.theme); }
+    if(FONT_SIZES.includes(s.font_size)){ document.getElementById('fontSelect').value=s.font_size; applyFontSize(s.font_size); }
+    if(INDENTS.includes(s.indent)){ document.getElementById('indentSelect').value=s.indent; applyIndent(s.indent); document.getElementById('sbIndent').textContent='Spaces: '+s.indent; }
+    const stdSel=document.getElementById('stdSelect');
+    if([...stdSel.options].some(o=>o.value===s.std)){ stdSel.value=s.std; applyStd(s.std); }
+    projects=await api('GET','/api/projects'); renderProjects();
+    if(s.last_project_id && projects.some(p=>p.id===s.last_project_id)) await openProject(s.last_project_id);
+  }catch(e){ flashErr(e); }
+  updateProjectState();
+})();
 loadTrash().catch(()=>{});
 renderTrash();
 loadTreeRefresh();
+updateProjectState();
 </script>
 </body>
 </html>

@@ -12,6 +12,8 @@ pub struct SettingsFile {
     pub indent: u32,
     #[serde(default = "default_std")]
     pub std: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_project_id: Option<String>,
 }
 
 fn default_theme() -> String {
@@ -34,6 +36,7 @@ impl Default for SettingsFile {
             font_size: default_font_size(),
             indent: default_indent(),
             std: default_std(),
+            last_project_id: None,
         }
     }
 }

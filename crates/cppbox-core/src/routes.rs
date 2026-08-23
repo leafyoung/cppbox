@@ -110,6 +110,7 @@ pub struct ProjectUpdate {
     pub title: Option<String>,
     pub cpp_standard: Option<String>,
     pub local_path: Option<String>,
+    pub stdin: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -146,6 +147,7 @@ fn proj_meta(s: &Snippet) -> Value {
         "updated_at": s.updated_at,
         "deleted_at": s.deleted_at,
         "local_path": s.local_path,
+        "stdin": s.stdin.clone().unwrap_or_default(),
     })
 }
 
@@ -259,11 +261,13 @@ async fn update_project(
         .cpp_standard
         .unwrap_or(s.cpp_standard.unwrap_or_else(|| "c++17".into()));
     let local_path = req.local_path.or(s.local_path);
+    let stdin = req.stdin.or(s.stdin);
     let now = now_iso();
-    sqlx::query("UPDATE snippets SET title = ?, cpp_standard = ?, local_path = ?, updated_at = ? WHERE id = ?")
+    sqlx::query("UPDATE snippets SET title = ?, cpp_standard = ?, local_path = ?, stdin = ?, updated_at = ? WHERE id = ?")
         .bind(&title)
         .bind(&cpp_standard)
         .bind(&local_path)
+        .bind(&stdin)
         .bind(&now)
         .bind(&pid)
         .execute(&st.db)
@@ -454,6 +458,7 @@ async fn get_settings() -> Json<Value> {
         "font_size": s.font_size,
         "indent": s.indent,
         "std": s.std,
+        "last_project_id": s.last_project_id,
         "path": crate::settings::settings_path().display().to_string(),
     }))
 }
@@ -461,7 +466,17 @@ async fn get_settings() -> Json<Value> {
 async fn put_settings(
     Json(req): Json<crate::settings::SettingsFile>,
 ) -> Result<Json<Value>, ApiError> {
-    let p = crate::settings::save(&req)
+    // merge onto stored settings so partial PUTs don't wipe the rest
+    // (scalars always sent by the client; last_project_id only when it changes)
+    let mut cur = crate::settings::load();
+    cur.theme = req.theme;
+    cur.font_size = req.font_size;
+    cur.indent = req.indent;
+    cur.std = req.std;
+    if req.last_project_id.is_some() {
+        cur.last_project_id = req.last_project_id;
+    }
+    let p = crate::settings::save(&cur)
         .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(json!({ "ok": true, "path": p.display().to_string() })))
 }

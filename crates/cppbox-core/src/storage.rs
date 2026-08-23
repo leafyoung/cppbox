@@ -122,7 +122,9 @@ SRCS := $(shell find . -type f \\( -name '*.cpp' -o -name '*.cc' -o -name '*.cxx
 HDRS := $(shell find . -type f \\( -name '*.h' -o -name '*.hpp' -o -name '*.hh' \\))\n\
 DIRS := $(sort $(dir $(SRCS) $(HDRS)) .)\n\
 INCS := $(patsubst %,-I%,$(DIRS))\n\
-BIN := app\n\n\
+BIN := app\n\
+$(info $(CXX) $(CXXFLAGS) $(INCS) $(SRCS) -o $(BIN))\n\
+\n\
 all: $(BIN)\n\
 $(BIN): $(SRCS)\n\
 \t$(CXX) $(CXXFLAGS) $(INCS) $(SRCS) -o $(BIN)\n\

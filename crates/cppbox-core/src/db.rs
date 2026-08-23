@@ -17,6 +17,7 @@ pub struct Snippet {
     pub version: Option<i64>,
     pub cpp_standard: Option<String>,
     pub deleted_at: Option<String>,
+    pub stdin: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -154,6 +155,9 @@ pub async fn migrate(db: &SqlitePool) -> anyhow::Result<()> {
         .execute(db)
         .await;
     let _ = sqlx::query("ALTER TABLE assignments ADD COLUMN late_policy TEXT")
+        .execute(db)
+        .await;
+    let _ = sqlx::query("ALTER TABLE snippets ADD COLUMN stdin TEXT")
         .execute(db)
         .await;
     Ok(())

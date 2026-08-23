@@ -1,47 +1,40 @@
 # TODO / Ponytail Deferred Items
 
-## UI review round 1 — planned phases U1–U6
+## UI review round 1 — U1–U6
 
-Reviewer context: local desktop app (teacher tool), single user, no auth (deferred). Three review points are already shipped and need no work: debugger UI (breakpoints/variables/call stack), autosave (1.2s debounce), multi-file projects.
+**U1–U5 shipped.** U6 (pedagogy) remains planned.
 
-### U1 — State coherence & error handling (do first)
-- [ ] One source of truth = `project`: startup auto-opens last project (persist `last_project_id` in settings.yaml via GET/PUT /api/settings)
-- [ ] Empty state overlay in editor when no project ("Create or open a project" + button); disable Run/Rebuild/Debug/Format/Save/Submit/VS Code with explanatory titles
-- [ ] `titleInput` disabled + placeholder when no project; Files panel shows the same state text
-- [ ] Toast system (top-right, auto-dismiss, kind: info/error, optional action button); replace permanent `statusText` errors with transient status that reverts after ~4s
-- [ ] `api()` wrapper: fetch TypeError → toast "Can't reach the CPPBox server" + Retry button re-invoking the failed call (closure); no raw browser strings in UI
+### U1 — State coherence & error handling (DONE)
+- [x] One source of truth = `project` + startup auto-opens last project (`last_project_id` in settings.yaml, merged PUT)
+- [x] Empty state overlay; Run/Rebuild/Debug/Format/Save/Submit disabled when no project
+- [x] Toast system; transient status text; api() network failure → toast + Retry (the call resumes)
 
-### U2 — Toolbar restructure, icons, hierarchy
-- [ ] Single toolbar row: [project name] [std] · Format Save (ghost) · spacer · ⚙(gear popover: theme/font/indent) · VS Code · Docs · Admin · Debug · Rebuild · Run(green) · Submit(accent)
-- [ ] Gear popover holds theme/font-size/indent selects (settings move out of toolbar row); std stays in toolbar (project-level teaching control)
-- [ ] Hand-rolled inline SVG icon set (`icon(name)` helper, stroke style, no new deps): play, bug, wand, save, refresh, upload, code, book, gear, trash, plus, file, folder; replace every emoji button toolbar+sidebar+tree
-- [ ] Hierarchy: Run = green filled primary, Submit = accent; everything else neutral ghost; Format loses yellow
-- [ ] Tooltips with shortcuts on all icon buttons (Ctrl+Enter, Shift+Ctrl+Enter, Shift+Alt+F, F5, Ctrl+S)
-- [ ] Kill logo-subtitle redundancy: `clangd · c++17` → just `clangd` (std already in toolbar)
+### U2 — Toolbar restructure, icons, hierarchy (DONE)
+- [x] Single toolbar row; theme/font/indent moved into ⚙ gear popover; Format/Save neutral ghost; Run green; Submit accent; tooltips with shortcuts everywhere
+- [x] Hand-rolled inline SVG icon set (17 icons, no deps); emoji gone from toolbar/sidebar/tree/modals/docs/debug
+- [x] Logo subtitle now just `clangd`
 
-### U3 — Bottom panel + status bar
-- [ ] Output panel tabs: Output | Compile Log | **Input** | **Problems**; delete the detached stdin bar
-- [ ] Input tab = multi-line textarea, persisted per project: new `stdin` TEXT column on projects + accept in PUT (migration pattern exists); sent with Run as before
-- [ ] Output header shows run metadata: `exit 0 · 1.24s` (wall-clock in frontend, zero backend change); also on success, not just nonzero
-- [ ] Compile Log starts with the exact compile command (backend: prepend the clang++ line from the Makefile to compile_output)
-- [ ] Problems tab: aggregated lspDiags across open files, file:line:col severity, click → open file & jump
-- [ ] New bottom status bar: backend dot (poll /api/sandbox/status 15s; tooltip = init msg), LSP dot, ⚠/✕ counts (click → Problems), Ln/Col, Spaces:N, std, `Saved · HH:MM` (from autosave)
+### U3 — Bottom panel + status bar (DONE)
+- [x] Output | Compile Log | Input | Problems tabs; stdin is a persisted per-project Input tab (`stdin` column on snippets)
+- [x] Output header shows `exit N · X.XXs` every run
+- [x] Compile Log leads with the exact compile command (Makefile `$(info …)` echo; stale auto-generated Makefiles regenerate at run)
+- [x] Problems tab: aggregated clangd diagnostics, click → open file & jump
+- [x] Status bar: backend dot (15s poll), clangd dot, ⚠/✕ counts → Problems, Ln/Col, Spaces, std, Saved · HH:MM
 
-### U4 — Sidebar & files affordances
-- [ ] Project row: keep active highlight; add hover ✏ rename (inline edit → same PUT as title input) + 🗑 delete with confirm; delete → Undo toast calling existing restore API (5s window)
-- [ ] Trash head: tooltip "Deleted projects"; rows get labeled restore/purge buttons
-- [ ] Files-panel icon-only buttons get title + aria-label
+### U4 — Sidebar & files affordances (DONE)
+- [x] Project rows: hover rename + delete; delete → Undo toast (restore API)
+- [x] Trash: labeled restore/purge buttons with tooltips; tree buttons have title + aria-label
 
-### U5 — Submit confirm, a11y, contrast
-- [ ] Submit confirmation dialog: assignment name + exact file list (names, sizes) + "this snapshot is what gets graded"
-- [ ] aria-label on every icon button; role=tablist/tab + arrow-key nav on editor tabs and output tabs; focus-visible rings on selects/buttons; bump --dim contrast for status strings
+### U5 — Submit confirm, a11y, contrast (DONE)
+- [x] Submit dialog lists the exact snapshot (file names + count) that gets graded
+- [x] aria-labels on icon buttons; role=tablist + arrow-key nav on editor and output tabs; focus-visible rings; --dim contrast bumped in dark themes
 
-### U6 — Pedagogy upgrades (separate follow-up, not this round)
+### U6 — Pedagogy upgrades (follow-up round, not this round)
 - [ ] Toolchain panel per project: warnings (-Wall -Wextra -Werror), sanitizers (ASan/UBSan), -O level → written into Makefile; compile command reflects it
 - [ ] Test runner: expected-vs-actual cases with pass/fail badges before Submit
 - [ ] Command palette (Ctrl+Shift+P); clangd quick-fixes on diagnostics
 - [ ] Student-side submission history view
-- Deferred as before: real role gating needs auth; reviewer's "dead Debug button" is wrong (lldb works)
+- Deferred as before: real role gating needs auth
 
 Items deliberately skipped for now. Add when the requirement becomes concrete.
 Status labels: `[DONE]` shipped · `[DEFERRED]` deliberately parked until its "when" fires · `[N/A]` not actually a gap.
