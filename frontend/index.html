@@ -99,6 +99,10 @@ button { font-family:inherit; }
 /* command palette */
 .pal-item { display:flex; align-items:center; gap:8px; padding:7px 12px; cursor:pointer; font-size:13px; color:var(--text); }
 .pal-item.active, .pal-item:hover { background:var(--surface2); color:var(--accent); }
+#qfPop { position:fixed; z-index:400; display:none; background:var(--surface2); border:1px solid var(--border); border-radius:6px; min-width:280px; max-width:380px; max-height:260px; overflow-y:auto; box-shadow:0 8px 30px rgba(0,0,0,.45); }
+/* ask dialog */
+.ask-input { width:100%; box-sizing:border-box; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:7px 9px; border-radius:4px; font-size:13px; outline:none; margin-top:6px; }
+.ask-input:focus { border-color:var(--accent); }
 /* input tab */
 #stdinArea { width:100%; height:100%; background:var(--bg); color:var(--text); border:none; outline:none; resize:none; padding:9px 13px; font-family:'JetBrains Mono','Fira Code',monospace; font-size:12px; box-sizing:border-box; }
 /* icons + focus */
@@ -395,6 +399,19 @@ button { font-family:inherit; }
 </div>
 
 <div class="toast-wrap" id="toastWrap"></div>
+<div id="qfPop"></div>
+<div class="modal-bg" id="askModal" onclick="if(event.target===this)askCancel()">
+  <div class="modal" style="max-width:380px;">
+    <h2 id="askTitle">—</h2>
+    <label id="askLabel" style="font-size:12px;color:var(--dim);"></label>
+    <input id="askInput" class="ask-input" onkeydown="if(event.key==='Enter')askOk();if(event.key==='Escape')askCancel();">
+    <div id="askHint" style="font-size:11px;color:var(--dim);margin-top:6px;"></div>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button class="btn btn-primary" onclick="askOk()">OK</button>
+      <button class="btn btn-ghost" onclick="askCancel()" style="margin-left:auto;">Cancel</button>
+    </div>
+  </div>
+</div>
 <div class="modal-bg" id="paletteModal" onclick="if(event.target===this)hidePalette()">
   <div class="modal" style="max-width:480px; padding:0;">
     <input id="paletteInput" placeholder="Type a command…" onkeydown="paletteKeys(event)" style="width:100%; box-sizing:border-box; background:var(--surface2); border:none; border-bottom:1px solid var(--border); color:var(--text); padding:12px 14px; font-size:14px; border-radius:6px 6px 0 0; outline:none;">
@@ -544,7 +561,7 @@ let editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
   gutters:['breakpoints','CodeMirror-lint-markers'], hintOptions:{hint:clangHint, completeSingle:false},
   lint:{ async:true, getAnnotations:lintGetAnnotations },
   extraKeys:{ 'Ctrl-Enter':()=>runCode(),'Cmd-Enter':()=>runCode(),'Shift-Ctrl-Enter':()=>runCode(true),'Shift-Cmd-Enter':()=>runCode(true),'Ctrl-S':saveActiveFile,'Cmd-S':saveActiveFile,
-    'Ctrl-F':saveAndFormat,'Cmd-F':saveAndFormat,'Ctrl-Space':'autocomplete','Shift-Space':'autocomplete','F5':debugToggle },
+    'Ctrl-F':saveAndFormat,'Cmd-F':saveAndFormat,'Ctrl-Space':'autocomplete','Shift-Space':'autocomplete','F5':debugToggle,'F12':gotoDefinition,'Ctrl-.':quickFixMenu,'Cmd-.':quickFixMenu },
 });
 
 // (state hoisted above editor init)
@@ -569,6 +586,22 @@ async function readResp(r){
   if(!r.ok){ let e; try{e=(await r.json()).detail;}catch(_){e=r.statusText;} throw new Error(e); }
   return r.json();
 }
+
+// ── Ask dialog (replaces window.prompt) ────────────────────────────────
+let askResolve=null;
+function ask(title,label,value='',hint=''){
+  return new Promise(res=>{
+    askResolve=res;
+    document.getElementById('askTitle').textContent=title;
+    document.getElementById('askLabel').textContent=label;
+    document.getElementById('askHint').textContent=hint;
+    const inp=document.getElementById('askInput'); inp.value=value;
+    document.getElementById('askModal').classList.add('show');
+    setTimeout(()=>{inp.focus();inp.select();},0);
+  });
+}
+function askOk(){ const v=document.getElementById('askInput').value; document.getElementById('askModal').classList.remove('show'); if(askResolve){askResolve(v);askResolve=null;} }
+function askCancel(){ document.getElementById('askModal').classList.remove('show'); if(askResolve){askResolve(null);askResolve=null;} }
 
 // ── Projects ─────────────────────────────────────────────────────────────
 async function loadProjects(){ projects=await api('GET','/api/projects'); renderProjects(); }
@@ -599,10 +632,9 @@ function renderProjects(){
 }
 async function createProject(){
   try{
-    const title=prompt('Project name:','Untitled')||'Untitled';
-    if(!title)return;
-    const localPath=prompt('Local path (optional, for Google Drive sync):','')||'';
-    const p=await api('POST','/api/projects',{title, cpp_standard:document.getElementById('stdSelect').value, local_path:localPath||null});
+    const title=await ask('New Project','Project name','Untitled'); if(!title)return;
+    const localPath=await ask('New Project','Local path (optional — for Google Drive sync)',''); if(localPath===null)return;
+    const p=await api('POST','/api/projects',{title:title||'Untitled', cpp_standard:document.getElementById('stdSelect').value, local_path:localPath||null});
     await loadProjects(); await openProject(p.id);
   }catch(e){ flashErr(e); }
 }
@@ -629,7 +661,7 @@ async function openProject(id){
 }
 async function renameProject(id){
   const p=projects.find(x=>x.id===id); if(!p)return;
-  const t=prompt('Rename project:',p.title); if(!t||t===p.title)return;
+  const t=await ask('Rename Project','Project name',p.title); if(!t||t===p.title)return;
   try{
     await api('PUT',`/api/projects/${id}`,{title:t});
     p.title=t;
@@ -757,7 +789,7 @@ async function newFile(dirPath){
   if(!project){setStatus('Open or create a project first');return;}
   try{
     const base=dirPath?dirPath+'/':'';
-    const name=prompt('New file path:',base+'new.cpp'); if(!name)return;
+    const name=await ask('New File','File path (relative to project)',base+'new.cpp','.cpp .h .hpp — created empty and opened'); if(!name)return;
     await api('PUT',`/api/projects/${project.id}/file`,{path:name,content:'',is_dir:false});
     await loadTree(); await openFile(name);
   }catch(e){ flashErr(e); }
@@ -766,13 +798,13 @@ async function newFolder(dirPath){
   if(!project){setStatus('Open or create a project first');return;}
   try{
     const base=dirPath?dirPath+'/':'';
-    const name=prompt('New folder path:',base+'folder'); if(!name)return;
+    const name=await ask('New Folder','Folder path (relative to project)',base+'folder'); if(!name)return;
     await api('PUT',`/api/projects/${project.id}/file`,{path:name,is_dir:true});
     await loadTree();
   }catch(e){ flashErr(e); }
 }
 async function renameNode(path){
-  const np=prompt('Rename/move to:',path); if(!np||np===path)return;
+  const np=await ask('Rename / Move','New path',path); if(!np||np===path)return;
   await api('POST',`/api/projects/${project.id}/file/move`,{old_path:path,new_path:np});
   // update open tab path if open
   const t=openTabs.find(t=>t.path===path); if(t){t.path=np;}
@@ -1074,7 +1106,78 @@ function clangHint(cm){
     return{from,to:cur,list:items.map(it=>({text:it.insertText||it.label,displayText:it.label,detail:it.detail}))};
   }).catch(()=>({list:[],from,to:cur}));
 }
-editor.on('inputRead',(cm,ch)=>{ if(!lsp.ready||ch.origin!=='+input')return; const c=ch.text[0]; if(c==='.'||c==='>'||c===':')setTimeout(()=>cm.showHint({hint:clangHint,completeSingle:false}),0); });
+editor.on('inputRead',(cm,ch)=>{ if(!lsp.ready||ch.origin!=='+input')return; const c=ch.text[0]; if(c==='.'||c==='>'||c===':')setTimeout(()=>cm.showHint({hint:clangHint,completeSingle:false}),0); if(c==='('||c===',')setTimeout(()=>showSignature(cm),0); });
+editor.on('mousedown',(cm,e)=>{ if(e.ctrlKey||e.metaKey){ e.preventDefault(); setTimeout(()=>gotoDefinition(),0); } });
+
+// ── clangd: go-to-definition (F12 / Ctrl+click), signature help, quick-fixes ─
+async function gotoDefinition(){
+  if(!lsp.ready||!lsp.openUri)return;
+  const cur=editor.getCursor();
+  try{
+    const res=await lspSend('textDocument/definition',{textDocument:{uri:lsp.openUri},position:{line:cur.line,character:cur.ch}});
+    const loc=Array.isArray(res)?res[0]:res; if(!loc||!loc.uri)return setStatus('No definition found');
+    const prefix='file://'+(lsp.workspace||'')+'/'+(project?project.id+'/':'');
+    if(loc.uri===lsp.openUri){ editor.setCursor({line:loc.range.start.line,character:loc.range.start.character}); editor.scrollIntoView(null,80); return; }
+    if(!loc.uri.startsWith(prefix))return setStatus('Definition outside project');
+    const path=loc.uri.slice(prefix.length);
+    await openFile(path);
+    editor.setCursor({line:loc.range.start.line,character:loc.range.start.character});
+    editor.scrollIntoView(null,80);
+  }catch(_){ setStatus('Definition not available'); }
+}
+let sigEl=document.createElement('div'); sigEl.className='lsp-hover'; sigEl.style.display='none'; document.body.appendChild(sigEl);
+async function showSignature(cm){
+  if(!lsp.ready||!lsp.openUri)return;
+  const cur=cm.getCursor();
+  try{
+    const res=await lspSend('textDocument/signatureHelp',{textDocument:{uri:lsp.openUri},position:{line:cur.line,character:cur.ch}});
+    if(!res||!res.signatures||!res.signatures.length){ sigEl.style.display='none'; return; }
+    const sig=res.signatures[res.activeSignature||0]; if(!sig){ sigEl.style.display='none'; return; }
+    let params=(sig.parameters||[]).map((p,i)=>i===(res.activeParameter||0)?'«'+(p.label||'')+'»':(p.label||'')).join(', ');
+    sigEl.innerHTML='<b>'+esc(sig.label||'')+'</b><br>'+esc(params);
+    const pos=cm.cursorCoords(true,'window');
+    sigEl.style.left=Math.min(pos.left, window.innerWidth-460)+'px';
+    sigEl.style.top=Math.max(4,pos.top-56)+'px';
+    sigEl.style.display='block';
+    clearTimeout(sigEl._t); sigEl._t=setTimeout(()=>sigEl.style.display='none',6000);
+  }catch(_){ sigEl.style.display='none'; }
+}
+async function quickFixMenu(){
+  if(!lsp.ready||!lsp.openUri)return;
+  const cur=editor.getCursor();
+  const lineDiags=(lspDiags[lsp.openUri]||[]).filter(d=>{ const r=d.range||{}; const s=r.start||{line:0},e=r.end||s; return cur.line>=s.line&&cur.line<=e.line; });
+  if(!lineDiags.length)return setStatus('No problems on this line');
+  const rng=lineDiags[0].range;
+  try{
+    const res=await lspSend('textDocument/codeAction',{textDocument:{uri:lsp.openUri},range:rng,context:{diagnostics:lineDiags}});
+    if(!res||!res.length)return setStatus('No quick fixes available');
+    let html=res.map((a,i)=>`<div class="pal-item" onclick="applyQuickFix(${i})">${esc(a.title||'fix')}</div>`).join('');
+    window._qf=res;
+    const m=document.getElementById('qfPop');
+    const pos=editor.cursorCoords(true,'window');
+    m.style.left=Math.min(pos.left-10, window.innerWidth-320)+'px'; m.style.top=(pos.bottom+6)+'px';
+    m.innerHTML=html; m.style.display='block';
+    setTimeout(()=>document.addEventListener('mousedown',function h(ev){ if(!ev.target.closest('#qfPop')){ m.style.display='none'; document.removeEventListener('mousedown',h); } }),0);
+  }catch(_){ setStatus('Quick fix not available'); }
+}
+function applyQuickFix(i){
+  const a=window._qf&&window._qf[i]; document.getElementById('qfPop').style.display='none';
+  if(!a)return;
+  if(a.edit)applyWorkspaceEdit(a.edit);
+  else if(a.command)setStatus('Fix command: '+a.command.title+' (not auto-applied)');
+}
+function applyWorkspaceEdit(we){
+  if(!we.changes)return setStatus('Unsupported fix format');
+  for(const uri in we.changes){
+    if(uri!==lsp.openUri)continue;   // ponytail: same-file fixes only; cross-file needs reopen logic
+    const edits=we.changes[uri].sort((x,y)=>y.range.start.line-x.range.start.line);
+    editor.operation(()=>{ for(const e of edits){ const s=e.range.start,en=e.range.end; editor.replaceRange(e.newText,{line:s.line,character:s.character},{line:en.line,character:en.character}); } });
+    setStatus('Quick fix applied');
+    return;
+  }
+  setStatus('Fix edits another file — reopen it to see changes');
+}
+
 let hoverEl=document.createElement('div'); hoverEl.className='lsp-hover'; hoverEl.style.display='none'; document.body.appendChild(hoverEl);
 function onEditorMouseMove(e){ if(!lsp.ready)return; clearTimeout(hoverTimer); hoverTimer=setTimeout(async()=>{ const pos=editor.coordsChar({left:e.clientX,top:e.clientY},'page'); if(!pos||pos.outside){hoverEl.style.display='none';return;} try{ const res=await lspSend('textDocument/hover',{textDocument:{uri:lsp.openUri},position:{line:pos.line,character:pos.ch}}); if(!res||!res.contents){hoverEl.style.display='none';return;} let t=res.contents; if(typeof t==='object')t=t.value; if(!t||!t.trim()){hoverEl.style.display='none';return;} hoverEl.textContent=t; hoverEl.style.left=(e.clientX+14)+'px'; hoverEl.style.top=(e.clientY+14)+'px'; hoverEl.style.display='block'; }catch(_){hoverEl.style.display='none';} },450); hoverEl.style.left=(e.clientX+14)+'px'; hoverEl.style.top=(e.clientY+14)+'px'; }
 editor.on('scroll',()=>hoverEl.style.display='none');
@@ -1163,6 +1266,8 @@ const PALETTE_CMDS=[
   {label:'Admin panel', hint:'', fn:showAdmin},
   {label:'Output panel: Input (stdin)', hint:'', fn:()=>switchOutTab('input')},
   {label:'Output panel: Compile Log', hint:'', fn:()=>switchOutTab('compile')},
+  {label:'Go to definition', hint:'F12 / Ctrl+Click', fn:gotoDefinition},
+  {label:'Quick fix…', hint:'Ctrl+.', fn:quickFixMenu},
   {label:'Output panel: Problems', hint:'', fn:()=>switchOutTab('problems')},
 ];
 let palIdx=0;
@@ -1836,6 +1941,29 @@ editor.on('cursorActivity',()=>{ const c=editor.getCursor(); document.getElement
 editor.on('mousemove',onEditorMouseMove);
 document.getElementById('titleInput').addEventListener('change',onTitleChange);
 window.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='f')e.preventDefault(); if(e.ctrlKey&&e.shiftKey&&e.key.toLowerCase()==='p'){ e.preventDefault(); openPalette(); } });
+
+// ── External-change refresh (VS Code / other editors on the same folder) ──
+// ponytail: focus-poll, not an fs watcher; swap for notify+WS push if concurrent editing gets tight
+let lastFocus=Date.now();
+window.addEventListener('focus',()=>{
+  if(!project||Date.now()-lastFocus<800)return;
+  lastFocus=Date.now();
+  (async()=>{
+    try{
+      tree=await api('GET',`/api/projects/${project.id}/tree`); renderTree();
+      // re-read open files that are not dirty (untouched by us since last save)
+      for(const t of openTabs){
+        if(t.dirty)continue;
+        const r=await api('GET',`/api/projects/${project.id}/file?path=${encodeURIComponent(t.path)}`);
+        if(openTabs[activeIdx]===t){
+          if(editor.getValue()!==r.content){ editor.setValue(r.content); refreshLint(); }
+        } else if(t.content!==r.content){
+          t.content=r.content;
+        }
+      }
+    }catch(_){}
+  })();
+});
 
 // ── Status bar ───────────────────────────────────────────────────────────
 function setDot(id,cls){ const el=document.getElementById(id); if(el)el.className='dot '+(cls||''); }

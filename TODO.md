@@ -43,12 +43,12 @@ Status labels: `[DONE]` shipped · `[DEFERRED]` deliberately parked until its "w
 - **HTTPS** `[DEFERRED]`: app serves localhost only; behind a reverse proxy (nginx/caddy) if ever exposed. Add when deployed to prod.
 - **File uploads** `[DEFERRED]`: files come from the on-disk project tree; submissions arrive via the Cloudflare collector. Add browser upload when needed.
 - **Docker image optimization** `[DEFERRED]`: Alpine clang image is ~610MB (now incl. gdb/lldb). A multi-stage build could slim it. Add when image size matters.
-- **CodeMirror 6** `[DEFERRED]`: CM5 from CDN (one script tag). Upgrade to CM6 when more editor features needed.
-- **LSP diagnostics source** `[DEFERRED]`: squiggles come from `-fsyntax-only`; clangd's `publishDiagnostics` is ignored to avoid double-marking. Switch to clangd-only when cross-file/semantic squiggles are needed.
+- **CodeMirror 6** `[DEFERRED]`: CM5 from CDN (one script tag). Upgrade to CM6 when more editor features needed. (Explicitly out of scope per user.)
+- **LSP diagnostics source** `[DONE]`: clangd publishDiagnostics is primary (compiler errors + clang-tidy); -fsyntax-only remains only as the pre-clangd fallback.
 - **clangd session lifecycle** `[DEFERRED]`: one clangd per WebSocket session (no pooling). Pool/reuse if spin-up becomes noticeable under load.
-- **Signature help / go-to-definition** `[DEFERRED]`: clangd supports them; only completion + hover are wired. Add when wanted.
-- **Web ↔ VS Code live sync** `[DEFERRED]`: both edit the same on-disk project folder, but the web file tree isn't file-watched — refresh manually after external edits. Add a fs watcher + push when concurrent editing is common.
-- **Rename/create via prompt** `[DEFERRED]`: tree actions use `window.prompt`. Swap for inline inputs when polish matters.
+- **Signature help / go-to-definition / quick-fixes** `[DONE]`: F12 / Ctrl+Click → definition (project files + headers); signature popup on `(`/`,`; Ctrl+. → clangd fixit menu with same-file WorkspaceEdit apply. (Include-fixer actions aren't offered by clangd in this config — compiler fixits verified.)
+- **Web ↔ VS Code live sync** `[DONE-lite]`: on window focus the tree and non-dirty open files re-read from disk (covers the edit-in-VSCode → switch-back flow). A real fs watcher + WS push stays unwarranted until truly concurrent editing.
+- **Rename/create dialogs** `[DONE]`: window.prompt replaced by a themed ask-dialog (create project, new file/folder, rename project/node), Enter/Escape supported.
 - **C++23 keyword set == C++20** `[N/A]`: C++23 adds no new core keywords beyond C++20, so highlighting is identical for 20/23. Accurate, not a gap.
 - **SSH/Remote-SSH bootstrap** `[DEFERRED]`: host exposes SSH (ap308:22); the user configures their VS Code Remote-SSH host entry. No auto keygen/config write yet.
 - **Formatter indent width** `[DONE]`: /api/format accepts `indent`; style becomes `{BasedOnStyle: LLVM, IndentWidth: N}` (frontend sends the indent setting; N=2 keeps plain LLVM).
