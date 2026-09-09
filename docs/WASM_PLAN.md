@@ -1,6 +1,7 @@
 # WASM migration plan (Option A)
 
-Status: **approved, Phase 0 in progress**. Supersedes the open-ended
+Status: **approved, Phase 0 complete for single-threaded execution; threads
+not yet working (see below)**. Supersedes the open-ended
 exploration in [WASM.md](WASM.md) with a concrete decision and phased plan.
 Work happens in `src_v2/` (backend) and `frontend_v2/` (frontend) alongside
 the current `crates/cppbox-core` + `frontend/`, until a phase is proven out
@@ -60,19 +61,34 @@ pre-installed.
 | `wasmtime` execution sandbox (stdin/stdout/exit code/timeout/memory limit) | ★★★★★ | Mature, production-grade (Fastly/Shopify use this exact pattern); replaces `compile_and_run`/`make_and_run` |
 | Multi-file projects | ★★★★★ | Same `clang++` invocation shape as today, just a different `--target` |
 | libc++ stdlib coverage (vector/string/algorithm/map/iostream) | ★★★★★ | Ships in the wasi-sysroot |
-| `<filesystem>`, exceptions, templates | ★★★★☆ | Expected to work via WASI preopens; validate in Phase 0 |
-| `std::thread`/`std::atomic`/`std::mutex`/condvar | ★★☆☆☆ | `wasm32-wasip1-threads` + `wasmtime-wasi-threads` exist but are explicitly experimental upstream; validate honestly, don't force it |
+| `<filesystem>`, exceptions, templates | ★★★★★ | Confirmed in Phase 0 — real C++ exceptions work (throw/catch, `.at()`), given the right (undocumented) clang/wasi-sysroot flag combination; see `src_v2/README.md` |
+| `std::thread`/`std::atomic`/`std::mutex`/condvar | ★☆☆☆☆ | Confirmed **not working** in Phase 0 with wasi-sdk-34 + wasmtime-46: `std::thread`'s constructor throws before the host is ever called. Not required for MVP; revisit if curriculum needs it |
 | `clang-format`/`clangd`/syntax-check bundling (no wasm needed) | ★★★★★ | Just ship native binaries with the app instead of requiring PATH install — independent of the wasm decision |
 | Debugging (`lldb-dap` via ptrace) | ★★☆☆☆ | No wasm equivalent to ptrace; DWARF-based custom debugger is real, separate engineering — deferred (Phase 3) |
 
 ## Phases
 
-**Phase 0 — toolchain spike (this step).** Prove compile+run end-to-end
-outside the main app, using the *extended* test matrix from the WASM.md
-side chat (not just the trivial subset): C++20, libc++, multi-file
-compilation, templates, exceptions, `<filesystem>`, stdin/stdout,
-`std::thread`/`std::mutex`/`std::atomic`/`condition_variable`, timeout,
-crash, infinite loop. Lives in `src_v2/`. No product code touched.
+**Phase 0 — toolchain spike. DONE for single-threaded execution.** Built in
+`src_v2/` (see its README for the full writeup and how to reproduce). Result:
+
+- **8/8 pass** on the extended single-threaded matrix (C++20, libc++,
+  multi-file, templates, exceptions, `<filesystem>`, stdin/stdout, `abort()`
+  trapping cleanly, an infinite loop cut off by epoch interruption) — this
+  validates the core Option A thesis end-to-end: native `clang++
+  --target=wasm32-wasip1` + `wasmtime` sandboxing is a working replacement
+  for podman on ordinary teaching C++, no LLVM rebuild or wasm port of the
+  compiler needed.
+- **Multithreaded matrix not working.** `wasmtime-wasi`'s `WasiP1Ctx` isn't
+  `Clone`-compatible with `wasmtime-wasi-threads`'s per-thread `Store`
+  requirement in the way wasmtime's own CLI works around it (fixed in
+  `src_v2`), but past that, every threaded test throws inside `std::thread`'s
+  constructor *before* the host's `wasi::thread-spawn` import is ever
+  called — a real toolchain-immaturity finding (wasi-sdk-34 pthread runtime
+  init vs. wasmtime-46's wasi-threads support), not a bug in our harness.
+  Confirms the risk flagged below rather than papering over it. Does not
+  block Phase 1: no curriculum content requiring `std::thread` was found in
+  `docs/`, and Option A's core value (dropping podman for ordinary
+  compile+run) doesn't need it.
 
 **Phase 1 — replace `compile_and_run`/`make_and_run` internals.** Swap the
 podman subprocess calls in `sandbox.rs` for `wasmtime` calls behind the same
@@ -96,8 +112,8 @@ packaging. A real wasm/DWARF debugger is a separate, later project.
 
 ## Open risks to track
 
-- `wasm32-wasip1-threads` maturity in `wasmtime` — Phase 0 will report a
-  clear pass/fail, not paper over it.
+- `wasm32-wasip1-threads` maturity in `wasmtime` — **confirmed broken** in
+  Phase 0 (see above and `src_v2/README.md`); tracked, not blocking.
 - Any curriculum content that assumes Linux syscalls (`fork`, `socket`,
   `ptrace` from student code, not just the debugger) won't map to WASI —
   none found in `docs/` as of this writing, but worth a deliberate check

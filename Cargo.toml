@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cppbox-core", "src-tauri"]
+members = ["crates/cppbox-core", "src-tauri", "src_v2"]
 resolver = "2"
 
 [workspace.package]

@@ -1,0 +1,12 @@
+[package]
+name = "cppbox-wasi-poc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+env_logger = "0.11.11"
+tempfile = "3.27.0"
+wasmtime = "46.0.3"
+wasmtime-wasi = "46.0.3"
+wasmtime-wasi-threads = "46.0.3"
