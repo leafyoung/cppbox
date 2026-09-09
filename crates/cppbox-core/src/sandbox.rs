@@ -1,10 +1,12 @@
 //! Isolated compile/run via podman (preferred) or docker, plus host-side
 //! clang-format and clang++ syntax check. Mirrors backend/sandbox.py.
 //!
-//! `compile_and_run` now prefers the `wasi_exec` (wasmtime) path for
-//! non-threaded code when that toolchain is ready, falling back to podman
-//! below otherwise - see docs/WASM_PLAN.md. `make_and_run`/`compile_debug`
-//! are still podman-only (Phase 1 covers the single-shot run path first).
+//! `compile_and_run` and `make_and_run` now prefer the `wasi_exec`
+//! (wasmtime) path for non-threaded, non-sanitizer code when that toolchain
+//! is ready, falling back to podman below otherwise - see
+//! docs/WASM_PLAN.md. `compile_debug` prefers running natively (no
+//! container) when the host has clang++ + lldb-dap - see
+//! `native_debug_available`/`debug.rs`.
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
@@ -116,6 +118,73 @@ pub fn ensure_sandbox_image() {
     }
 }
 
+/// Host clang++ + lldb-dap present, so `debug.rs` can run a debug session
+/// natively instead of in podman's ptrace-enabled container. See
+/// docs/WASM_PLAN.md's Phase 3: a student debugging their own process
+/// isn't an adversarial scenario, so podman's ptrace container wasn't
+/// buying real security here, just packaging - but bundling a *native*
+/// debugger the way Phase 2 bundled the wasm toolchain would need a full
+/// native clang++ (wasi-sdk's is wasm32-only) and lldb-dap has no slim
+/// standalone release the way clangd does, so this still requires a host
+/// install, falling back to podman when it's missing.
+pub fn native_debug_available() -> bool {
+    let ok = |bin: &str, arg: &str| {
+        std::process::Command::new(bin)
+            .arg(arg)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok()
+    };
+    ok("clang++", "--version") && ok("lldb-dap", "--help")
+}
+
+/// Compile with debug symbols (-g -O0) directly on the host, no container -
+/// used when `native_debug_available()`. Returns (binary, job_dir), same
+/// contract as `compile_debug`.
+pub async fn compile_debug_native(
+    root: &Path,
+    files: &[File],
+    std: &str,
+) -> Result<(PathBuf, PathBuf), String> {
+    let dir = job_dir(root);
+    write_sources(&dir, files);
+    let sources = source_list(files);
+    let inc = include_flags(files);
+    let mut c = Command::new("clang++");
+    c.current_dir(&dir)
+        .arg("-g")
+        .arg("-O0")
+        .arg("-fno-omit-frame-pointer")
+        .arg(format!("-std={std}"))
+        .arg("-Wall")
+        .arg("-Wextra")
+        .arg("-fcolor-diagnostics")
+        .args(inc.split_whitespace())
+        .args(&sources)
+        .arg("-o")
+        .arg("a.out")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let out = match tokio::time::timeout(Duration::from_secs(60), c.output()).await {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => return Err(format!("compile error: {e}")),
+        Err(_) => return Err("Compilation timed out (60s)".into()),
+    };
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    let binary = dir.join("a.out");
+    if out.status.success() && binary.exists() {
+        Ok((binary, dir))
+    } else {
+        Err(if text.trim().is_empty() {
+            "Compilation failed".into()
+        } else {
+            text
+        })
+    }
+}
+
 /// Compile with debug symbols (-g -O0) for gdb. Returns (binary, job_dir).
 pub async fn compile_debug(
     root: &Path,
@@ -183,6 +252,26 @@ pub async fn make_and_run(
     extra: &str,
     clean: bool,
 ) -> Value {
+    // Wasm path: skip `make`/podman entirely and just compile the project's
+    // files directly (no incremental caching, but classroom-sized projects
+    // don't need it) - same fallback conditions as compile_and_run, plus
+    // sanitizer builds (unverified on wasm32-wasip1, see `wants_sanitizer`).
+    if crate::wasi_exec::is_ready() && !crate::wasi_exec::wants_sanitizer(extra) {
+        let src = crate::storage::collect_source_files(root, pid, local_path);
+        if !src.is_empty() {
+            let files: Vec<File> = src
+                .into_iter()
+                .map(|(name, content)| File { name, content })
+                .collect();
+            if !crate::wasi_exec::uses_threading(&files) {
+                return crate::wasi_exec::compile_and_run_with_flags(
+                    root, &files, stdin, std, extra,
+                )
+                .await;
+            }
+        }
+    }
+
     let dir = crate::storage::project_root(root, pid, local_path);
     // regenerate the Makefile when absent or when it's an older auto-generated
     // one (e.g. missing the $(info ...) command echo) — user-authored Makefiles

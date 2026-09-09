@@ -1,7 +1,10 @@
-//! LLDB debugger bridge over DAP (Debug Adapter Protocol), via lldb-dap running
-//! inside the podman sandbox (ptrace-enabled). One lldb-dap subprocess per
-//! WebSocket session. Frontend <-> backend: JSON commands/events over WS.
-//! Backend <-> lldb-dap: DAP (Content-Length framed JSON), same framing as LSP.
+//! LLDB debugger bridge over DAP (Debug Adapter Protocol), via lldb-dap - run
+//! natively on the host when `sandbox::native_debug_available()` (no
+//! container: a student debugging their own process isn't adversarial, see
+//! docs/WASM_PLAN.md Phase 3), else inside podman's ptrace-enabled sandbox
+//! as before. One lldb-dap subprocess per WebSocket session. Frontend <->
+//! backend: JSON commands/events over WS. Backend <-> lldb-dap: DAP
+//! (Content-Length framed JSON), same framing as LSP.
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -95,7 +98,13 @@ async fn run_session(socket: WebSocket, st: AppState, pid: String, std: String) 
         .send(to_msg(json!({"type":"status","text":"Compiling (debug)…"})))
         .await;
 
-    let (binary, job_dir) = match sandbox::compile_debug(&st.root, &files, &std).await {
+    let native = sandbox::native_debug_available();
+    let compiled = if native {
+        sandbox::compile_debug_native(&st.root, &files, &std).await
+    } else {
+        sandbox::compile_debug(&st.root, &files, &std).await
+    };
+    let (binary, job_dir) = match compiled {
         Ok(v) => v,
         Err(e) => {
             let _ = ws_sender
@@ -111,35 +120,53 @@ async fn run_session(socket: WebSocket, st: AppState, pid: String, std: String) 
         }
     };
 
-    // spawn lldb-dap in a ptrace-enabled container
-    let mut cmd = tokio::process::Command::new(sandbox::runtime());
-    cmd.args([
-        "run",
-        "--rm",
-        "-i",
-        "--cap-add",
-        "SYS_PTRACE",
-        "--security-opt",
-        "seccomp=unconfined",
-        "--security-opt",
-        "label=disable",
-        "--user",
-        "0",
-        "--network",
-        "none",
-        "--memory",
-        "512m",
-        "--cpus",
-        "1",
-    ])
-    .arg("-v")
-    .arg(format!("{}:/home/sandbox/work:rw", abs.display()))
-    .args(["-w", "/home/sandbox/work"])
-    .arg(sandbox::sandbox_image())
-    .args(["lldb-dap"])
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
+    // `work_path` is what DAP is told "program"/"cwd" and source paths live
+    // under - the real absolute job dir when running lldb-dap natively, or
+    // the container's mount point when running it in podman.
+    let work_path = if native {
+        abs.display().to_string()
+    } else {
+        "/home/sandbox/work".to_string()
+    };
+
+    let mut cmd = if native {
+        // no container: a student debugging their own process isn't an
+        // adversarial scenario, see docs/WASM_PLAN.md Phase 3.
+        let mut c = tokio::process::Command::new("lldb-dap");
+        c.current_dir(&abs);
+        c
+    } else {
+        // spawn lldb-dap in a ptrace-enabled container
+        let mut c = tokio::process::Command::new(sandbox::runtime());
+        c.args([
+            "run",
+            "--rm",
+            "-i",
+            "--cap-add",
+            "SYS_PTRACE",
+            "--security-opt",
+            "seccomp=unconfined",
+            "--security-opt",
+            "label=disable",
+            "--user",
+            "0",
+            "--network",
+            "none",
+            "--memory",
+            "512m",
+            "--cpus",
+            "1",
+        ])
+        .arg("-v")
+        .arg(format!("{}:/home/sandbox/work:rw", abs.display()))
+        .args(["-w", "/home/sandbox/work"])
+        .arg(sandbox::sandbox_image())
+        .args(["lldb-dap"]);
+        c
+    };
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
@@ -179,9 +206,16 @@ async fn run_session(socket: WebSocket, st: AppState, pid: String, std: String) 
         })),
     )
     .await;
-    let _ = send_request(&mut stdin, &pending, &seq, "launch", Some(json!({
-        "program": "/home/sandbox/work/a.out", "cwd": "/home/sandbox/work", "stopOnEntry": false,
-    }))).await;
+    let _ = send_request(
+        &mut stdin,
+        &pending,
+        &seq,
+        "launch",
+        Some(json!({
+            "program": format!("{work_path}/a.out"), "cwd": work_path, "stopOnEntry": false,
+        })),
+    )
+    .await;
 
     loop {
         tokio::select! {
@@ -197,7 +231,7 @@ async fn run_session(socket: WebSocket, st: AppState, pid: String, std: String) 
                     Cmd::Bp { file, lines } => {
                         bps.insert(file.clone(), lines.clone());
                         if configured {
-                            let _ = set_breakpoints(&mut stdin, &pending, &seq, &file, &lines, &mut ws_sender).await;
+                            let _ = set_breakpoints(&mut stdin, &pending, &seq, &work_path, &file, &lines, &mut ws_sender).await;
                         }
                     }
                     Cmd::Continue => { let _ = step_cmd(&mut stdin, &pending, &seq, "continue", thread_id).await; }
@@ -231,7 +265,7 @@ async fn run_session(socket: WebSocket, st: AppState, pid: String, std: String) 
                     "initialized" => {
                         let files: Vec<(String, Vec<u32>)> = bps.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                         for (file, lines) in &files {
-                            let _ = set_breakpoints(&mut stdin, &pending, &seq, file, lines, &mut ws_sender).await;
+                            let _ = set_breakpoints(&mut stdin, &pending, &seq, &work_path, file, lines, &mut ws_sender).await;
                         }
                         let _ = send_request(&mut stdin, &pending, &seq, "configurationDone", Some(json!({}))).await;
                         configured = true;
@@ -256,13 +290,13 @@ async fn run_session(socket: WebSocket, st: AppState, pid: String, std: String) 
                                     frames.push(json!({
                                         "id": f.get("id").cloned().unwrap_or(Value::Null),
                                         "name": f.get("name").and_then(|n| n.as_str()).unwrap_or(""),
-                                        "file": path.as_deref().map(norm_path),
+                                        "file": path.as_deref().map(|p| norm_path(p, &work_path)),
                                         "line": f.get("line").cloned().unwrap_or(Value::Null),
                                     }));
                                 }
                                 if let Some(top) = arr.first() {
                                     let path = top.get("source").and_then(|s| s.get("path")).and_then(|p| p.as_str()).map(str::to_string);
-                                    file = path.as_deref().map(norm_path);
+                                    file = path.as_deref().map(|p| norm_path(p, &work_path));
                                     line = top.get("line").and_then(|l| l.as_u64());
                                     func = top.get("name").and_then(|n| n.as_str()).map(str::to_string);
                                     if let Some(frid) = top.get("id").and_then(|i| i.as_u64()) {
@@ -336,6 +370,7 @@ async fn set_breakpoints(
     stdin: &mut ChildStdin,
     pending: &Pending,
     seq: &AtomicU64,
+    work_path: &str,
     file: &str,
     lines: &[u32],
     ws_sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
@@ -347,7 +382,7 @@ async fn set_breakpoints(
         seq,
         "setBreakpoints",
         Some(json!({
-            "source": {"path": format!("/home/sandbox/work/{file}")},
+            "source": {"path": format!("{work_path}/{file}")},
             "breakpoints": bps_arr,
             "lines": lines,
             "sourceModified": false,
@@ -395,9 +430,10 @@ async fn step_cmd(
     Ok(())
 }
 
-/// Strip the in-container workdir prefix from a DAP source path.
-fn norm_path(p: &str) -> String {
-    p.strip_prefix("/home/sandbox/work/")
+/// Strip the workdir prefix (container mount point, or the real absolute
+/// path when running natively) from a DAP source path.
+fn norm_path(p: &str, work_path: &str) -> String {
+    p.strip_prefix(&format!("{work_path}/"))
         .map(str::to_string)
         .unwrap_or_else(|| p.to_string())
 }

@@ -1,8 +1,10 @@
 # WASM migration plan (Option A, hybrid on threading)
 
-Status: **Phases 0-2 landed** (0: go/no-go gate incl. threading; 1:
-`compile_and_run` via wasmtime; 2: clang-format/clang++/clangd bundled,
-no host install required). Verdict: threading is confirmed
+Status: **Phases 0-3 landed** (0: go/no-go gate incl. threading; 1:
+`compile_and_run`/`make_and_run` via wasmtime; 2: clang-format/clang++/
+clangd bundled, no host install required; 3: debugging runs natively,
+no podman, when the host has clang++/lldb-dap). Only Phase 4 (shrinking
+podman's role in the docs/deploy story to match) remains. Verdict: threading is confirmed
 non-functional on wasm32-wasip1-threads today, and the curriculum does
 need it (FN6806 has ~6 threading-focused lessons) — so the plan is a
 hybrid: `wasmtime` for everything single-threaded (now live in
@@ -70,7 +72,7 @@ pre-installed.
 | `<filesystem>`, exceptions, templates | ★★★★★ | Confirmed in Phase 0 — real C++ exceptions work (throw/catch, `.at()`), given the right (undocumented) clang/wasi-sysroot flag combination; see `src_v2/README.md` |
 | `std::thread`/`std::atomic`/`std::mutex`/condvar | ★☆☆☆☆ | **Confirmed non-functional** (go/no-go gate, not a nice-to-have) — see "Threading go/no-go" below |
 | `clang-format`/`clangd`/syntax-check bundling (no wasm needed) | ★★★★★ | Just ship native binaries with the app instead of requiring PATH install — independent of the wasm decision |
-| Debugging (`lldb-dap` via ptrace) | ★★☆☆☆ | No wasm equivalent to ptrace; DWARF-based custom debugger is real, separate engineering — deferred (Phase 3) |
+| Debugging (`lldb-dap` via ptrace) | ★★★★☆ | No wasm equivalent to ptrace, so not wasm-sandboxed — but confirmed working running natively (no podman) when the host has clang++/lldb-dap, done in Phase 3. A real wasm/DWARF debugger remains separate, deferred engineering if ever wanted |
 
 ## Phases
 
@@ -149,8 +151,7 @@ validation pass. Instead:
   (worth periodically re-testing `src_v2/examples/threads_minimal` against
   new wasi-sdk/wasmtime releases — it's the smallest possible repro).
 
-**Phase 1 — `compile_and_run` done; `make_and_run`/`compile_debug` still
-podman-only.** `crates/cppbox-core/src/wasi_exec.rs` ports the Phase 0
+**Phase 1 — done, including `make_and_run`.** `crates/cppbox-core/src/wasi_exec.rs` ports the Phase 0
 spike into production: native `clang++ --target=wasm32-wasip1` +
 `wasmtime` sandboxing (memory limiter, epoch-based timeout, WASI preopen
 scoped to the job dir), with the same JSON contract `compile_and_run`
@@ -182,11 +183,24 @@ confirmed-broken wasm threading path. Also verified the toolchain
 bootstrap itself from a fully cold start (no cached assets), not just with
 `src_v2`'s already-downloaded cache reused.
 
-`make_and_run` (multi-file project builds via the auto-generated
-Makefile) and `compile_debug` are unchanged — deliberately out of scope
-for this pass; the auto-generated Makefile would need a wasm-aware
-variant, which is more surface area than the single-shot `/api/run` path
-this phase targeted first.
+`make_and_run` (multi-file project builds, used by `/api/projects/{pid}/run`
+and `/rebuild`) skips `make`/podman entirely too when the wasi toolchain is
+ready: it gathers the project's files via
+`storage::collect_source_files` and compiles them directly through
+`wasi_exec::compile_and_run_with_flags` (no incremental object-file
+caching, but classroom-sized projects don't need it) - no wasm-aware
+Makefile variant needed, since `make` itself was never load-bearing once
+the podman container it ran inside is gone. Extra toolchain flags
+(`storage::flags_to_extra` - `-O0`/`-Werror`/etc.) are passed through, with
+one deliberate exception: `-fsanitize=...` routes to podman instead
+(`wasi_exec::wants_sanitizer`) - this project's wasm32-wasip1 sanitizer
+support is unverified, and a silently-wrong ASan/UBSan run would be worse
+than an unnecessary podman fallback. Verified end-to-end with a real
+multi-file project (`main.cpp` + `helper.hpp`/`helper.cpp`) via
+`/api/projects/{pid}/run`.
+
+`compile_debug` (used by `debug.rs`) is handled in Phase 3 below, not
+here.
 
 **Phase 2 — done: clang-format/clang++/clangd no longer require a host
 install.** The key discovery that made this cheap: wasi-sdk's own release
@@ -214,11 +228,41 @@ theoretical ~550MB trimmed one - still far below the "~1.5-1.9GB LLVM
 release" concern this phase was originally flagged with, and a one-time
 cost, not something users download per-compile.
 
-**Phase 3 — debugging (deferred).** Interim: run debug sessions as a native
-(non-wasm) debug build directly on the host, no podman — a student
-debugging their own process isn't an adversarial scenario, so the
-sandboxing podman gave `debug.rs` wasn't buying real security, just
-packaging. A real wasm/DWARF debugger is a separate, later project.
+**Phase 3 — done, via the interim plan (not a real wasm/DWARF debugger,
+which remains a separate, later project if ever wanted).** `debug.rs` now
+runs the debug session natively (no podman) when
+`sandbox::native_debug_available()` — host `clang++` *and* `lldb-dap` both
+present — reasoning unchanged from the original plan: a student debugging
+their own process isn't an adversarial scenario, so podman's
+ptrace-enabled container wasn't buying real security here, just packaging.
+Falls back to the existing podman path otherwise (checked per debug
+session, not cached/backgrounded like the wasi toolchain — it's a cheap
+check, not a download).
+
+Unlike Phases 1-2, this **wasn't cheaply bundleable**: wasi-sdk's clang++
+only targets wasm32 (confirmed — it produced a wasm binary even with no
+explicit `--target` flag, "cannot execute: Exec format error" natively),
+and `lldb-dap` has no slim standalone release the way `clangd` does — a
+fully bundled native debugger would mean the full native LLVM release,
+exactly the size concern Phase 2 avoided for the compiler by using
+wasi-sdk's dedicated distribution instead. So this still requires a host
+install for debugging specifically, same as it effectively did before
+(the podman path always assumed the image had a working
+clang++/lldb-dap; only the *sandboxing*, not the tool requirement,
+changes here).
+
+The refactor needed care: `debug.rs` hardcoded `/home/sandbox/work` as the
+DAP `program`/`cwd`/breakpoint-source path prefix throughout (launch
+request, `set_breakpoints`, `norm_path`). All of that now goes through a
+`work_path` computed once per session — the real absolute job dir when
+native, the container mount point when podman — threaded through every
+call site rather than hardcoded. Verified end-to-end with a real DAP
+session (a Python `websockets` driver, not just code review): breakpoint
+set and hit at the correct line, correct function name, correct locals
+(`a=2, b=3, result=0` at the breakpoint), continue resumed execution and
+produced the correct output, clean exit — confirming `norm_path`'s
+prefix-stripping produces the same relative paths (`main.cpp`, not an
+absolute host path) the frontend already expects from the podman path.
 
 **Phase 4 — shrink podman to "thread-using assignments only", not drop it
 entirely.** Update `CLAUDE.md`, `ensure_sandbox_image()`/`sandbox_status`,

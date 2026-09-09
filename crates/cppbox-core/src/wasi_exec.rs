@@ -291,12 +291,20 @@ pub fn uses_threading(files: &[File]) -> bool {
         .any(|f| MARKERS.iter().any(|m| f.content.contains(m)))
 }
 
+/// `extra` is whatever `storage::flags_to_extra` produced (e.g.
+/// `-O0 -Werror`) for a project's toolchain settings - applied *after* our
+/// own baseline flags so a project's `-O0` correctly overrides our default
+/// `-O2` (clang uses the last `-O` flag on the command line). Callers must
+/// keep `-fsanitize=...` out of `extra` here - see
+/// `wants_sanitizer`/`sandbox::make_and_run`, which routes those to podman
+/// instead: this project's wasm32-wasip1 sanitizer support is unverified.
 fn compile(
     root: &Path,
     dir: &Path,
     sources: &[String],
     inc: &str,
     std: &str,
+    extra: &str,
     out: &Path,
 ) -> Result<std::process::Output, String> {
     let clangxx = bundled_clangxx(root).ok_or("bundled clang++ not ready")?;
@@ -321,11 +329,19 @@ fn compile(
         .arg("-Wl,--max-memory=268435456")
         .arg("-lunwind")
         .args(inc.split_whitespace())
+        .args(extra.split_whitespace())
         .args(sources)
         .arg("-o")
         .arg(out)
         .output()
         .map_err(|e| e.to_string())
+}
+
+/// This project's wasm32-wasip1 sanitizer support is unverified - route
+/// sanitizer-enabled builds to podman instead of silently ignoring or
+/// mis-running the flag.
+pub fn wants_sanitizer(extra: &str) -> bool {
+    extra.contains("-fsanitize")
 }
 
 /// Mirrors podman's `--memory` limit for the run stage.
@@ -501,6 +517,20 @@ fn cleanup(dir: &Path) {
 /// Compile then run under wasmtime. Same JSON shape as
 /// `sandbox::compile_and_run` - callers can't tell the difference.
 pub async fn compile_and_run(root: &Path, files: &[File], stdin: &str, std: &str) -> Value {
+    compile_and_run_with_flags(root, files, stdin, std, "").await
+}
+
+/// Same as `compile_and_run`, plus a project's extra toolchain flags (e.g.
+/// `-Werror`/`-O0` from `storage::flags_to_extra`) - used by
+/// `sandbox::make_and_run`. Callers must not pass `-fsanitize=...` here,
+/// see `wants_sanitizer`.
+pub async fn compile_and_run_with_flags(
+    root: &Path,
+    files: &[File],
+    stdin: &str,
+    std: &str,
+    extra: &str,
+) -> Value {
     let dir = job_dir(root);
     write_sources(&dir, files);
     let sources = source_list(files);
@@ -510,6 +540,7 @@ pub async fn compile_and_run(root: &Path, files: &[File], stdin: &str, std: &str
     let root_owned = root.to_path_buf();
     let dir_owned = dir.clone();
     let std_owned = std.to_string();
+    let extra_owned = extra.to_string();
     let wasm_path_owned = wasm_path.clone();
     let compile_result = tokio::time::timeout(
         Duration::from_secs(60),
@@ -520,6 +551,7 @@ pub async fn compile_and_run(root: &Path, files: &[File], stdin: &str, std: &str
                 &sources,
                 &inc,
                 &std_owned,
+                &extra_owned,
                 &wasm_path_owned,
             )
         }),
