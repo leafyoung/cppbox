@@ -258,6 +258,31 @@ directly in the course repos:
   and still gets "no member named 'par'"; this libc++ build has no
   parallel-STL backend. Left unfixed per instructions — the only remaining
   real gap in the whole audit.
+
+  **Why**: unlike libstdc++ (which adopted Intel's Parallel STL, backed by
+  a mandatory TBB dependency), libc++ has to build and run in contexts
+  libstdc++ doesn't worry about as much — freestanding/no-thread builds,
+  Apple platforms, cross-compilation targets like our own
+  `wasm32-wasip1` — so it can't hang a hard TBB dependency off the
+  standard library. Instead it designed a *pluggable* backend model
+  (`serial`, `std_thread`, `libdispatch`, an OpenMP-offload backend in
+  review) selected at libc++'s own build time via a CMake flag
+  (`LIBCXX_PSTL_BACKEND`), not something a downstream consumer can switch
+  on later. That architecture is still being finished: a libc++ maintainer
+  said in 2023 "currently libc++ is broken with the PSTL... that will take
+  a while," and P0024 (the parallel algorithms paper) is still tracked as
+  "In Progress" on libc++'s own C++17 conformance page as of this writing.
+  Neither Homebrew's general-purpose libc++ nor wasi-sdk's wasm32 sysroot
+  build enables any backend for this, so the symbols are simply absent —
+  and even a `std_thread`-backed build wouldn't help on
+  `wasm32-wasip1-threads` specifically, since thread spawning itself is
+  the confirmed-broken feature from the threading go/no-go section above.
+  Sources: [libc++ PSTL Integration design
+  doc](https://libcxx.llvm.org/DesignDocs/PSTLIntegration.html), [libc++
+  C++17 status](https://libcxx.llvm.org/Status/Cxx17.html), [LLVM issue
+  #99938](https://github.com/llvm/llvm-project/issues/99938), [LLVM
+  Discourse
+  thread](https://discourse.llvm.org/t/how-to-build-libc-with-pstl-support/69341).
 - **Six small pre-existing source bugs, unrelated to wasm** (would have
   failed under this exact clang++/libc++ config regardless of compile
   target — several reproduce natively): `22-operator/main.cpp` had
