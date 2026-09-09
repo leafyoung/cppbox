@@ -29,5 +29,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures-util = "0.3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
 getrandom = "0.3"
+wasmtime = "46.0.3"
+wasmtime-wasi = "46.0.3"

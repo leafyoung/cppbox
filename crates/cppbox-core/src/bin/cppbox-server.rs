@@ -22,6 +22,15 @@ async fn main() -> anyhow::Result<()> {
     std::thread::spawn(|| {
         cppbox_core::sandbox::ensure_sandbox_image();
     });
+    // opportunistic: assemble the wasm32-wasip1 toolchain if the host has
+    // wasm-ld; compile_and_run falls back to podman above if this doesn't
+    // become ready (missing wasm-ld, download failure, etc).
+    {
+        let wasi_root = root.clone();
+        std::thread::spawn(move || {
+            cppbox_core::wasi_exec::ensure_wasi_toolchain(&wasi_root);
+        });
+    }
 
     let frontend = std::env::var("CPPBOX_FRONTEND")
         .map(std::path::PathBuf::from)

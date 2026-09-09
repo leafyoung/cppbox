@@ -467,9 +467,16 @@ async fn read_file_raw(
 }
 
 /// Sandbox image init state (0 unknown, 1 pulling/present, 2 ready, 3 failed).
+/// Also reports the wasm32-wasip1 (wasmtime) toolchain, which - when ready -
+/// is what `compile_and_run` actually uses for non-threaded code; podman
+/// stays the fallback (see docs/WASM_PLAN.md).
 async fn sandbox_status() -> Json<Value> {
     let (state, msg) = sandbox::sandbox_state();
-    Json(json!({ "state": state, "ready": state == 2, "message": msg }))
+    let (wasi_state, wasi_msg) = crate::wasi_exec::wasi_state();
+    Json(json!({
+        "state": state, "ready": state == 2, "message": msg,
+        "wasi": { "state": wasi_state, "ready": wasi_state == 2, "message": wasi_msg },
+    }))
 }
 
 /// Local submission history for a project (from /api/submit).

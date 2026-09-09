@@ -47,6 +47,15 @@ fn main() {
             std::thread::spawn(|| {
                 cppbox_core::sandbox::ensure_sandbox_image();
             });
+            // opportunistic: assemble the wasm32-wasip1 toolchain if the host
+            // has wasm-ld; compile_and_run falls back to podman above if
+            // this doesn't become ready.
+            {
+                let wasi_root = data_root.clone();
+                std::thread::spawn(move || {
+                    cppbox_core::wasi_exec::ensure_wasi_toolchain(&wasi_root);
+                });
+            }
 
             // start the embedded axum backend on a dynamic localhost port
             let (tx, rx) = std::sync::mpsc::channel::<u16>();

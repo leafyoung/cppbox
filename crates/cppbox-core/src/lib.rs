@@ -7,6 +7,7 @@ pub mod routes;
 pub mod sandbox;
 pub mod settings;
 pub mod storage;
+pub mod wasi_exec;
 
 use std::path::PathBuf;
 

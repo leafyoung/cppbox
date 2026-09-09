@@ -1,5 +1,10 @@
 //! Isolated compile/run via podman (preferred) or docker, plus host-side
 //! clang-format and clang++ syntax check. Mirrors backend/sandbox.py.
+//!
+//! `compile_and_run` now prefers the `wasi_exec` (wasmtime) path for
+//! non-threaded code when that toolchain is ready, falling back to podman
+//! below otherwise - see docs/WASM_PLAN.md. `make_and_run`/`compile_debug`
+//! are still podman-only (Phase 1 covers the single-shot run path first).
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
@@ -572,7 +577,17 @@ fn cleanup(dir: &Path) {
 }
 
 /// Compile then run. Returns the JSON shape the frontend expects.
+///
+/// Dispatches to the wasmtime path (`wasi_exec`) for ordinary (non-thread)
+/// code when that toolchain is ready, falling back to the podman path
+/// below otherwise - unready wasi toolchain, or code that
+/// `wasi_exec::uses_threading` flags (wasm32-wasip1-threads is confirmed
+/// non-functional today, see docs/WASM_PLAN.md). This keeps podman as a
+/// zero-regression fallback rather than a hard requirement everywhere.
 pub async fn compile_and_run(root: &Path, files: &[File], stdin: &str, std: &str) -> Value {
+    if crate::wasi_exec::is_ready() && !crate::wasi_exec::uses_threading(files) {
+        return crate::wasi_exec::compile_and_run(root, files, stdin, std).await;
+    }
     let cr = compile_files(root, files, std).await;
     if !cr.success {
         if let Some(b) = &cr.binary {

@@ -9,6 +9,8 @@ projects/
 workdir/
 # submission zips
 submissions/
+# downloaded wasm32-wasip1 sysroot + resource-dir overlay (see wasi_exec.rs)
+wasi-toolchain/
 
 # ── Cloudflare worker artifacts ──
 worker/node_modules/

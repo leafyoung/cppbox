@@ -1,15 +1,16 @@
 # WASM migration plan (Option A, hybrid on threading)
 
-Status: **Phase 0 complete, including the threading go/no-go gate.
-Verdict: threading is confirmed non-functional on wasm32-wasip1-threads
-today, and the curriculum does need it (FN6806 has ~6 threading-focused
-lessons) — so the plan is now a hybrid: Option A (wasmtime) for everything
-single-threaded, native/podman execution kept specifically for
-thread-using assignments.** Supersedes the open-ended exploration in
-[WASM.md](WASM.md) with a concrete decision and phased plan. Work happens
-in `src_v2/` (backend) and `frontend_v2/` (frontend) alongside the current
-`crates/cppbox-core` + `frontend/`, until a phase is proven out and cut
-over.
+Status: **Phase 0 complete (including the threading go/no-go gate) and
+Phase 1 landed for `compile_and_run`.** Verdict: threading is confirmed
+non-functional on wasm32-wasip1-threads today, and the curriculum does
+need it (FN6806 has ~6 threading-focused lessons) — so the plan is a
+hybrid: `wasmtime` for everything single-threaded (now live in
+`crates/cppbox-core/src/wasi_exec.rs`), podman kept specifically for
+thread-using assignments. Supersedes the open-ended exploration in
+[WASM.md](WASM.md) with a concrete decision and phased plan.
+`src_v2`/`frontend_v2` were the Phase 0 spike (kept for reference/reuse);
+Phase 1 onward edits `crates/cppbox-core` directly, since it's now proven
+out enough to build on rather than prototype separately.
 
 ## Decision
 
@@ -147,14 +148,44 @@ validation pass. Instead:
   (worth periodically re-testing `src_v2/examples/threads_minimal` against
   new wasi-sdk/wasmtime releases — it's the smallest possible repro).
 
-**Phase 1 — replace `compile_and_run`/`make_and_run` internals for
-non-threaded assignments.** Swap the podman subprocess calls in
-`sandbox.rs` for `wasmtime` calls behind the same function signatures, with
-a per-assignment flag (or a cheap static check — does any source file
-`#include <thread>`/`<future>`/`<mutex>`/`<condition_variable>`?) choosing
-podman instead of wasmtime for the six thread-using directories identified
-above. `routes.rs`, `admin.rs`, and the frontend are otherwise untouched —
-`sandbox.rs` is already the right abstraction boundary.
+**Phase 1 — `compile_and_run` done; `make_and_run`/`compile_debug` still
+podman-only.** `crates/cppbox-core/src/wasi_exec.rs` ports the Phase 0
+spike into production: native `clang++ --target=wasm32-wasip1` +
+`wasmtime` sandboxing (memory limiter, epoch-based timeout, WASI preopen
+scoped to the job dir), with the same JSON contract `compile_and_run`
+already returns. `sandbox::compile_and_run` dispatches to it when the wasi
+toolchain is ready *and* `wasi_exec::uses_threading` doesn't flag the
+source (textual check for `<thread>`/`<future>`/`<mutex>`/
+`<condition_variable>`/`<atomic>`/`<shared_mutex>` — false positives just
+mean an unnecessary podman fallback, which is safe) — otherwise it falls
+through to the podman path unchanged, so this is purely additive, never a
+regression. `routes.rs` gained one field (`wasi` status alongside the
+existing podman one on `/api/sandbox/status`); `admin.rs` and the frontend
+are untouched, confirming `sandbox.rs` was the right abstraction boundary.
+
+The wasi toolchain (sysroot + resource-dir overlay) is fetched
+opportunistically at startup (`ensure_wasi_toolchain`, spawned the same way
+`ensure_sandbox_image` already is, in both `cppbox-server` and the Tauri
+app) into `<root>/wasi-toolchain/` — gitignored, same pattern as `data/`/
+`workdir/`. If the host has no `wasm-ld` (this project doesn't bundle one
+yet — see Phase 2) or the download fails, the toolchain is marked
+unready and every compile+run silently continues through podman exactly as
+before; nothing about this is a hard requirement.
+
+Verified end-to-end against the real HTTP API (not just `src_v2`'s
+harness): clean compile+run, a compile error, stdin piping, an infinite
+loop cut off at the 15s timeout, and — critically — that threaded code
+(the classic 4-thread atomic-counter test) is correctly routed to podman
+and returns the right answer (`4000000`), not silently misrouted into the
+confirmed-broken wasm threading path. Also verified the toolchain
+bootstrap itself from a fully cold start (no cached assets), not just with
+`src_v2`'s already-downloaded cache reused.
+
+`make_and_run` (multi-file project builds via the auto-generated
+Makefile) and `compile_debug` are unchanged — deliberately out of scope
+for this pass; the auto-generated Makefile would need a wasm-aware
+variant, which is more surface area than the single-shot `/api/run` path
+this phase targeted first.
 
 **Phase 2 — stop requiring host-installed clang-format/clangd/clang++.**
 Bundle native toolchain binaries (or a one-time download) instead of a
