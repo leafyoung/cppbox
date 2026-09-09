@@ -85,9 +85,12 @@ impl Toolchain {
             // needs" (as low as 2 pages / 128KB), which a real program's
             // heap/stack blows through immediately - confirmed against the
             // course sample set (`73-cache_locality` needs ~40MB just for
-            // its arrays). 16MB initial / 256MB max is generous headroom,
-            // not a hard student-code limit.
-            .arg("-Wl,--initial-memory=16777216")
+            // its *static* arrays specifically, which is why this is
+            // --initial-memory, not just --max-memory: initial data is
+            // placed at fixed offsets and can't rely on runtime growth).
+            // 64MB initial / 256MB max is generous headroom, not a hard
+            // student-code limit.
+            .arg("-Wl,--initial-memory=67108864")
             .arg("-Wl,--max-memory=268435456");
         if threads {
             cmd.arg("-pthread");

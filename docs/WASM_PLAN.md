@@ -229,46 +229,85 @@ tradeoff should be made explicit to the user/course, not glossed over.
 Compiled every `.cpp` file under `~/work/MFEg/FN6805/FN6805` and
 `~/work/MFEg/FN6806/FN6806` (146 files, 77 directories) against the pinned
 toolchain, targeting `wasm32-wasip1-threads` (the superset target — compiles
-non-threaded code identically to `wasm32-wasip1`) with the same flags
-`Toolchain::compile` uses. **64/77 directories compiled cleanly.** Of the
-13 that didn't, after checking each individually against a native
-`-stdlib=libc++` compile to separate "wasm-specific" from "libc++-specific"
-from "pre-existing/unrelated":
+non-threaded code identically to `wasm32-wasip1`), using each course's own
+documented standard version (`-std=c++17` by default per both courses'
+AGENTS.md, `-std=c++20` only for the two modules that name it explicitly —
+the first audit pass had wrongly forced `-std=c++20` everywhere, which
+produced a few false failures, corrected below).
 
-- **Confirmed real wasm/wasi-sysroot gaps**: `std::valarray` is not
-  available at all (`52-mc_gbm`, and directly relevant to the dedicated
-  `50-valarray` lesson) — this was not a synthetic-subset finding, it's a
-  named lesson topic. `std::execution::par` (parallel STL execution
-  policies, `52-stl/test_for_each_parallel.cpp`) is also unavailable.
-- **Confirmed libc++-vs-libstdc++ portability gaps, *not* wasm-specific**
-  (reproduced identically compiling natively with `-stdlib=libc++`, no
-  wasm target involved): `std::ref` requires an explicit `<functional>`
-  include under libc++ that isn't needed under libstdc++'s transitive
-  includes (`54-thread/test_thread.cpp`); `unique_ptr` move-assignment
-  with an incomplete pointee type is stricter under libc++
-  (`3a-unique_ptr`). These would need small source fixes regardless of the
-  podman-vs-wasm decision, purely from switching standard library
-  implementations — worth knowing before Phase 1, not caused by it.
-- **Confirmed, already fixed**: initial/max memory sizing
-  (`73-cache_locality`, ~40MB of static arrays) — see the threading section
-  above; `Toolchain::compile` now sets generous defaults unconditionally.
-- **Out of scope, expected**: `96-test-quantlib-xtensor-eigen` needs Eigen
-  (`#include <eigen3/Eigen/Dense>`) — third-party numerical libraries need
-  their own wasm ports/vendoring, separate work, low priority (1/77
-  samples).
-- **Audit-script artifacts, not real findings**: several failures
-  (`30-header-file`, `72-multiple_inclusion`, `30a-template_specialize`)
-  were the audit script incorrectly compiling multiple independent
-  same-directory demo files together as one program (a "which files
-  belong together" heuristic problem in the throwaway test script, not in
-  `Toolchain::compile` itself, which always compiles a single known
-  project's file set). A few others (`22-operator`, `70-chrono`,
-  `90-et-infinite-loop`, `92-et-vec-benchmark`) look like pre-existing
-  source issues (a type error, a corrupted header, ambiguous overloads
-  from mixing a third-party date library with C++20's own — possibly
-  `-std=c++20`-specific, not necessarily wasm-related) and weren't chased
-  further; worth a second look before Phase 1 if any of those specific
-  lessons matter.
+**Final result: 73/77 directories compile cleanly.** The first pass found
+13 failing directories; after checking each individually (including native
+`-stdlib=libc++` compiles, to separate "wasm-specific" from
+"libc++-specific" from "pre-existing/unrelated"), 11 turned out to be
+small, genuine source bugs — unrelated to wasm, but only surfaced because
+this was the first time this content had been compiled with libc++/clang++
+in this exact configuration — and have been fixed directly in the course
+repos:
+
+- **`std::valarray` was never actually missing** — this was **wrong** in
+  the first pass of this audit and is corrected here. `52-mc_gbm/gbm_multi.h`
+  used `valarray<double>` and `vector<double>` without including
+  `<valarray>`/`<vector>` (relying on transitive includes libstdc++
+  happens to provide and libc++ doesn't) — fixed by adding both includes.
+  `~/work/MFEg/FN6806/FN6806/50-valarray` (the dedicated valarray lesson)
+  already explicitly includes `<valarray>` and always compiled fine, which
+  is what should have caught this the first time.
+- **`std::execution::par` (parallel STL) is a real, confirmed gap** —
+  `52-stl/test_for_each_parallel.cpp` already has `#include <execution>`
+  and still gets "no member named 'par'"; this libc++ build has no
+  parallel-STL backend. Left unfixed per instructions — the only remaining
+  real gap in the whole audit.
+- **Six small pre-existing source bugs, unrelated to wasm** (would have
+  failed under this exact clang++/libc++ config regardless of compile
+  target — several reproduce natively): `22-operator/main.cpp` had
+  `explicit MyBool(int)` on a constructor the demo immediately relies on
+  for implicit conversion — removed `explicit`.
+  `3a-unique_ptr/main.cpp` called the wrong overload (`add_three`, which
+  returns `void`, instead of `add_three_with_return`) — fixed the call.
+  `30a-template_specialize/template_specialize.cpp` had a typo'd include
+  (`"template_int.h"` for a file that doesn't exist, instead of
+  `"template_specialize.h"`, which does) — fixed. `90-et-infinite-loop/main.cpp`
+  had `using '\n';` (not valid C++) where `using std::endl;` was clearly
+  intended — fixed. `92-et-vec-benchmark/non_et.h` had two stray bytes
+  (`./`) corrupting the end of the file — removed. `70-chrono/main.cpp`
+  wasn't a source bug at all — it's designed for `-std=c++17` (mixing a
+  third-party date library with C++20's own chrono calendar support is
+  what caused the original ambiguous-overload error) and compiles cleanly
+  once the audit uses the right standard version.
+- **Two libc++-vs-libstdc++ portability gaps, real but *not* wasm-specific**
+  (`54-thread/test_thread.cpp` needed an explicit `#include <functional>`
+  for `std::ref` that libstdc++ provides transitively and libc++ doesn't)
+  — fixed with the include. This is a genuine migration cost from
+  switching standard library implementations, independent of podman vs.
+  wasm, worth knowing before Phase 1.
+- **`96-test-quantlib-xtensor-eigen`: Eigen and xtensor now vendored and
+  working; QuantLib remains unaddressed.** Per the user's request, Eigen
+  3.4.1 and xtensor 0.24.7 + xtl 0.7.5 (version-matched — see below) were
+  downloaded into `FN6806/FN6806/third_party/` and both compile and work
+  under this target (confirmed by compiling the actual Eigen/xtensor code
+  in this file, not just resolving the includes). QuantLib is a
+  compiled library, not header-only, and wasn't requested — the file
+  still fails on `#include <ql/math/array.hpp>`. `52-mc_gbm`'s optional
+  Eigen path (`gbm_multi_thread_eigen.*`, gated by `__has_include`) now
+  compiles too, as a side effect of the same vendoring.
+- **Two directories correctly left untouched**: `30-header-file` and
+  `72-multiple_inclusion` are documented in `FN6805/AGENTS.md` as
+  **intentionally uncompilable teaching examples** — "the link errors are
+  the lesson." The first audit pass mis-flagged these as script artifacts
+  (compiling independent files together); the real reason is deeper —
+  they're deliberately broken by design, not accidentally broken by the
+  audit. Left exactly as they are.
+
+Version-pinning note on the xtensor/xtl vendoring: xtensor's current
+release (0.27.1) reorganized its headers into subdirectories
+(`xtensor/containers/xarray.hpp` instead of `xtensor/xarray.hpp`), which
+doesn't match this file's `#include <xtensor/xarray.hpp>` — needed 0.24.7
+for the flat layout the existing code expects. 0.24.7 in turn needs an
+xtl older than latest (0.8.2 dropped `xtl::sequence_size`/`negation`/
+`conjunction`, which 0.24.7 still calls) — used 0.7.5, its own documented
+minimum. One small vendor patch was needed: xtl 0.7.5's bundled `<span>`
+polyfill (`xspan_impl.hpp`) calls `std::terminate()` without including
+`<exception>` — added the include directly in the vendored copy.
 
 ## Open risks to track
 
@@ -286,7 +325,16 @@ from "pre-existing/unrelated":
   release; clang-format/clang++ don't — see "Pinned toolchain versions"
   above) needs an explicit decision, not a default assumption that
   bundling is free.
-- The "which files belong together" heuristic in the throwaway course-audit
-  script produced a few false-positive failures (see audit section above)
-  — if this audit is ever re-run/extended, that heuristic needs fixing
-  first, or results re-checked by hand for newly-failing directories.
+- ~~The "which files belong together" heuristic...~~ — **resolved**: the
+  audit script now uses each course's own documented build unit (whole
+  directory for FN6806, matching its own AGENTS.md) and per-module
+  standard version instead of a blanket guess; re-run clean at 73/77.
+- QuantLib remains unaddressed for `96-test-quantlib-xtensor-eigen` — it's
+  a compiled library, not header-only like Eigen/xtensor, and wasn't
+  requested. Getting it to cross-compile to wasm32-wasip1-threads would be
+  a separate, nontrivial project if ever wanted.
+- The vendored `third_party/eigen3`, `third_party/xtensor`, and
+  `third_party/xtl` in `FN6806/FN6806` are pinned to specific versions
+  chosen for compatibility with the existing `#include` paths and each
+  other (see the course content audit above for why) — bumping any of them
+  needs re-checking those constraints, not just grabbing "latest".
