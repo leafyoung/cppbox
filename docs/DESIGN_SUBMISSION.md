@@ -1,6 +1,10 @@
-# DESIGN_SUBMISSION.md — Submission & Marking System
+# Submission & Marking System
 
-Status: **design approved, not yet built**. Build starts on explicit go-ahead.
+Status: **built** — classes/students/assignments, key minting, pull/organize,
+the marking editor (`@file` autocomplete, Publish), the admin grid, and
+`mailto:` delivery for both keys and feedback are all implemented
+(`crates/cppbox-core/src/admin.rs` + the Admin panel in `frontend/index.html`).
+This document remains the design reference for the data model and flows.
 
 A system for students to submit C++ projects and for the teacher to collect,
 organize, mark, and return feedback — built on top of CPPBox.
