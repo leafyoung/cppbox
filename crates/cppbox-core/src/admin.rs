@@ -947,7 +947,7 @@ async fn submit(
         .to_string();
     let id = uuid();
     sqlx::query("INSERT INTO submissions(id,key,counter,project_id,project_title,zip_path,commit_hash,submitted_at) VALUES (?,?,?,?,?,?,?,?)")
-        .bind(&id).bind(&req.key).bind(counter).bind(&proj.id).bind(&proj.title).bind(&zip_path.display().to_string()).bind(&commit_hash).bind(&submitted_at)
+        .bind(&id).bind(&req.key).bind(counter).bind(&proj.id).bind(&proj.title).bind(zip_path.display().to_string()).bind(&commit_hash).bind(&submitted_at)
         .execute(&st.db).await.map_err(db_err)?;
     let _ =
         sqlx::query("INSERT INTO submission_log(project_id, counter, created_at) VALUES (?,?,?)")

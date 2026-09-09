@@ -1,7 +1,8 @@
 # WASM migration plan (Option A, hybrid on threading)
 
-Status: **Phase 0 complete (including the threading go/no-go gate) and
-Phase 1 landed for `compile_and_run`.** Verdict: threading is confirmed
+Status: **Phases 0-2 landed** (0: go/no-go gate incl. threading; 1:
+`compile_and_run` via wasmtime; 2: clang-format/clang++/clangd bundled,
+no host install required). Verdict: threading is confirmed
 non-functional on wasm32-wasip1-threads today, and the curriculum does
 need it (FN6806 has ~6 threading-focused lessons) — so the plan is a
 hybrid: `wasmtime` for everything single-threaded (now live in
@@ -187,9 +188,31 @@ for this pass; the auto-generated Makefile would need a wasm-aware
 variant, which is more surface area than the single-shot `/api/run` path
 this phase targeted first.
 
-**Phase 2 — stop requiring host-installed clang-format/clangd/clang++.**
-Bundle native toolchain binaries (or a one-time download) instead of a
-podman image pull, same lifecycle shape as `ensure_sandbox_image()` today.
+**Phase 2 — done: clang-format/clang++/clangd no longer require a host
+install.** The key discovery that made this cheap: wasi-sdk's own release
+already bundles a full working `clang++`, `clang-format`, and `wasm-ld` (we
+only needed the sysroot from it in Phase 1) - so `ensure_wasi_toolchain`
+now downloads that one archive instead of two, with **no** custom
+resource-dir trick needed (wasi-sdk's clang++ is self-contained). clangd
+gets its own separate, smaller download (its own slim standalone release,
+not the full LLVM distribution). `sandbox::format_code`/`check_syntax` and
+`lsp.rs`'s `clangd_path` all prefer the bundled binaries now, falling back
+to a host PATH lookup if bundling isn't ready - same "opportunistic, never
+a regression" pattern as Phase 1.
+
+One real lesson from getting this working: an early version tried to trim
+the bundled sysroot down to just the `wasm32-wasip1` target (dropping
+`wasip1-threads`/`wasip2`/`wasip3`, which this project never targets) to
+save disk space - that silently broke `#include <iostream>` resolution
+(clang's eh/noeh multilib header selection depends on the sysroot's
+overall directory *shape* in a way that isn't documented, and empirically
+resists explanation - adding back the dropped sibling target directories,
+even empty ones, didn't fix it either). Extracting the whole archive
+unfiltered fixed it and was verified working end-to-end; the trade is
+~850MB on disk (bundled wasi-sdk + clangd, uncompressed) instead of a
+theoretical ~550MB trimmed one - still far below the "~1.5-1.9GB LLVM
+release" concern this phase was originally flagged with, and a one-time
+cost, not something users download per-compile.
 
 **Phase 3 — debugging (deferred).** Interim: run debug sessions as a native
 (non-wasm) debug build directly on the host, no podman — a student

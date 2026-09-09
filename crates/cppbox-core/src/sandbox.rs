@@ -70,7 +70,7 @@ pub fn ensure_sandbox_image() {
         set(1, format!("image {image} present"));
     } else {
         set(1, format!("image {image} missing, pulling from ghcr…"));
-        let out = std::process::Command::new(&rt)
+        let out = std::process::Command::new(rt)
             .args(["pull", &image])
             .output();
         match out {
@@ -89,7 +89,7 @@ pub fn ensure_sandbox_image() {
     }
     // smoke test: compile and run a sample program inside the container
     let test = "printf 'int main(){return 0;}' > /home/sandbox/t.cpp && clang++ -std=c++17 /home/sandbox/t.cpp -o /home/sandbox/t && /home/sandbox/t";
-    let out = std::process::Command::new(&rt)
+    let out = std::process::Command::new(rt)
         .args([
             "run",
             "--rm",
@@ -303,7 +303,7 @@ pub async fn make_and_run(
 /// Pick the container CLI once: podman (rootless) preferred, docker fallback.
 pub fn runtime() -> &'static str {
     static RT: OnceLock<&'static str> = OnceLock::new();
-    *RT.get_or_init(|| {
+    RT.get_or_init(|| {
         for c in ["podman", "docker"] {
             if std::process::Command::new(c)
                 .arg("--version")
@@ -612,9 +612,14 @@ pub async fn compile_and_run(root: &Path, files: &[File], stdin: &str, std: &str
     })
 }
 
-/// Host clang-format (no container) — returns original on failure.
-pub async fn format_code(code: &str, style: &str) -> String {
-    let mut c = Command::new("clang-format");
+/// clang-format — the bundled one from the wasi-sdk archive
+/// (`wasi_exec::bundled_clang_format`) when ready, else whatever's on the
+/// host PATH. Returns original on failure either way.
+pub async fn format_code(root: &Path, code: &str, style: &str) -> String {
+    let bin = crate::wasi_exec::bundled_clang_format(root)
+        .map(|p| p.into_os_string())
+        .unwrap_or_else(|| "clang-format".into());
+    let mut c = Command::new(bin);
     c.arg(format!("--style={style}"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -681,9 +686,24 @@ pub async fn check_syntax(
         args.push("-I".into());
         args.push(d.clone());
     }
+
+    // Prefer the bundled clang++ (from the wasi-sdk archive) over a host
+    // install; -fsyntax-only never links or runs anything, so it doesn't
+    // matter that it's a wasm32-wasip1 cross-compiler for this purpose.
+    let bin = match crate::wasi_exec::bundled_clangxx(root) {
+        Some(p) => {
+            args.push("--target=wasm32-wasip1".into());
+            args.push(format!(
+                "--sysroot={}",
+                crate::wasi_exec::sysroot_dir(root).display()
+            ));
+            p.into_os_string()
+        }
+        None => "clang++".into(),
+    };
     args.push(dir.join(&entry).display().to_string());
 
-    let mut c = Command::new("clang++");
+    let mut c = Command::new(bin);
     c.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
     let text = match tokio::time::timeout(Duration::from_secs(20), c.output()).await {
         Ok(Ok(o)) => {

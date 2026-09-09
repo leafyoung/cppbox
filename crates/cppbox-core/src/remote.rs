@@ -85,7 +85,7 @@ pub async fn pull_submissions(
     let mut other = 0;
     let mut names: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
-    for o in objects.as_array().map(|a| a.clone()).unwrap_or_default() {
+    for o in objects.as_array().cloned().unwrap_or_default() {
         let Some(name) = o.get("name").and_then(|n| n.as_str()).map(String::from) else {
             continue;
         };

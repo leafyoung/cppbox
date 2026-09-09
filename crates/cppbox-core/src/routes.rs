@@ -437,13 +437,16 @@ async fn check_code(State(st): State<AppState>, Json(req): Json<CheckRequest>) -
     Json(json!({ "diagnostics": diags }))
 }
 
-async fn format_code_endpoint(Json(req): Json<FormatRequest>) -> Json<Value> {
+async fn format_code_endpoint(
+    State(st): State<AppState>,
+    Json(req): Json<FormatRequest>,
+) -> Json<Value> {
     // honor the user's indent setting (default LLVM = 2)
     let style = match req.indent {
         Some(n) if n != 2 => format!("{{BasedOnStyle: LLVM, IndentWidth: {n}}}"),
         _ => "LLVM".to_string(),
     };
-    Json(json!({ "formatted": sandbox::format_code(&req.code, &style).await }))
+    Json(json!({ "formatted": sandbox::format_code(&st.root, &req.code, &style).await }))
 }
 
 /// Raw file bytes (PDF preview etc.). Content-Type set by extension.

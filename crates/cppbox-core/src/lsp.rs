@@ -4,9 +4,8 @@
 //! Backend <-> clangd: Content-Length framing over stdio. The custom method
 //! `$/sync` {std, files} writes project files to the session workspace and
 //! returns {workspace} so the frontend can build file:// URIs. Mirrors lsp.py.
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::OnceLock;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
@@ -20,23 +19,10 @@ use tokio::sync::mpsc;
 use crate::storage;
 use crate::AppState;
 
-/// Locate clangd once (cache). Falls back to the bare name if detection fails.
-fn clangd_path() -> &'static str {
-    static P: OnceLock<&'static str> = OnceLock::new();
-    *P.get_or_init(|| {
-        for c in ["clangd"] {
-            if std::process::Command::new(c)
-                .arg("--version")
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok()
-            {
-                return c;
-            }
-        }
-        "clangd"
-    })
+/// The bundled clangd (`wasi_exec::bundled_clangd`) when ready, else
+/// whatever's on the host PATH.
+fn clangd_path(root: &Path) -> PathBuf {
+    crate::wasi_exec::bundled_clangd(root).unwrap_or_else(|| PathBuf::from("clangd"))
 }
 
 pub async fn ws_handler(wsu: WebSocketUpgrade, State(st): State<AppState>) -> impl IntoResponse {
@@ -57,7 +43,7 @@ async fn run_session(socket: WebSocket, root: PathBuf) {
         let _ = std::fs::set_permissions(&ws_dir, std::fs::Permissions::from_mode(0o777));
     }
 
-    let mut cmd = tokio::process::Command::new(clangd_path());
+    let mut cmd = tokio::process::Command::new(clangd_path(&root));
     cmd.args(["--log=error", "--pch-storage=memory", "--clang-tidy"])
         .current_dir(&ws_dir)
         .stdin(Stdio::piped())

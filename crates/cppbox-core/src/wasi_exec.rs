@@ -1,20 +1,31 @@
-//! Compile + run non-threaded student C++ by targeting `wasm32-wasip1` with
-//! the host's own native `clang++`, then executing the result sandboxed
-//! under `wasmtime` - replacing podman for the common case. See
-//! `docs/WASM_PLAN.md` in the repo root for the full design and the
-//! Phase 0 spike this was ported from (`src_v2/`).
+//! Compile + run non-threaded student C++ against `wasm32-wasip1`, using a
+//! **bundled** clang++ (from wasi-sdk's own release, not a host install),
+//! then executing the result sandboxed under `wasmtime` - replacing podman
+//! for the common case. See `docs/WASM_PLAN.md` for the full design and
+//! the Phase 0 spike this was ported from (`src_v2/`).
+//!
+//! Also bundles clang-format (comes free in the same wasi-sdk archive) and
+//! clangd (its own slim standalone release) - see `bundled_clang_format`/
+//! `bundled_clangd`, used by `sandbox::format_code`/`lsp.rs` in preference
+//! to a host install, falling back to PATH if bundling isn't ready.
+//!
+//! Key discovery that shapes this whole module: wasi-sdk's own clang++
+//! needs **no** `-resource-dir` trick to work (unlike a generic host
+//! clang++, which needs its native resource-dir manually merged with the
+//! wasm32 builtins - see git history for that earlier, more complicated
+//! approach). wasi-sdk ships a self-contained cross-compiler; pointing
+//! `--sysroot` at its bundled sysroot is enough.
 //!
 //! Thread-using code (`uses_threading`) still routes to `sandbox.rs`'s
 //! podman path: `wasm32-wasip1-threads` is confirmed non-functional with
 //! today's wasi-sdk/wasmtime pairing (spawned threads trap on
 //! `uninitialized element`), not something this module works around.
 //!
-//! If the host is missing `wasm-ld` (this project doesn't bundle it yet -
-//! see Phase 2), the toolchain is marked unready and `sandbox.rs` falls
-//! back to podman for *everything*, unchanged from today - this module is
-//! purely opportunistic, never a regression.
+//! Everything here is opportunistic: if a download fails or the platform
+//! isn't recognized, the relevant toolchain just stays unready and callers
+//! fall back to their pre-existing host-PATH/podman behavior - never a
+//! regression from today.
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -28,7 +39,9 @@ use crate::sandbox::File;
 
 const WASI_SDK_TAG: &str = "wasi-sdk-34";
 const WASI_SDK_VERSION: &str = "34.0";
-const BASE_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download";
+const WASI_SDK_BASE_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download";
+const CLANGD_VERSION: &str = "22.1.6";
+const CLANGD_BASE_URL: &str = "https://github.com/clangd/clangd/releases/download";
 
 /// Readiness, mirroring `sandbox::sandbox_state()`: 0 unknown, 1 preparing,
 /// 2 ready, 3 failed (falls back to podman for everything).
@@ -56,86 +69,125 @@ fn toolchain_dir(root: &Path) -> PathBuf {
     root.join("wasi-toolchain")
 }
 
-fn sysroot_dir(root: &Path) -> PathBuf {
-    toolchain_dir(root).join(format!("wasi-sysroot-{WASI_SDK_VERSION}"))
+fn sdk_dir(root: &Path) -> PathBuf {
+    toolchain_dir(root).join(format!("wasi-sdk-{WASI_SDK_VERSION}"))
 }
 
-fn resource_dir(root: &Path) -> PathBuf {
-    toolchain_dir(root).join("resource-dir")
+pub fn sysroot_dir(root: &Path) -> PathBuf {
+    sdk_dir(root).join("share/wasi-sysroot")
 }
 
-fn wasm_ld_present() -> bool {
-    std::process::Command::new("wasm-ld")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok()
+fn bin_dir(root: &Path) -> PathBuf {
+    sdk_dir(root).join("bin")
 }
 
-/// Download/assemble the wasm32-wasip1 sysroot + resource-dir overlay.
-/// Blocking; call from a background thread at startup (mirrors
-/// `sandbox::ensure_sandbox_image()`).
-pub fn ensure_wasi_toolchain(root: &Path) {
-    if std::process::Command::new("clang++")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_err()
-    {
-        set_state(3, "no native clang++ on PATH".into());
-        return;
+fn exe(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.into()
     }
-    if !wasm_ld_present() {
+}
+
+/// Bundled clang++, if the wasi-sdk toolchain is ready.
+pub fn bundled_clangxx(root: &Path) -> Option<PathBuf> {
+    let p = bin_dir(root).join(exe("clang++"));
+    p.exists().then_some(p)
+}
+
+/// Bundled clang-format (comes free in the same wasi-sdk archive), if ready.
+pub fn bundled_clang_format(root: &Path) -> Option<PathBuf> {
+    let p = bin_dir(root).join(exe("clang-format"));
+    p.exists().then_some(p)
+}
+
+fn clangd_dir(root: &Path) -> PathBuf {
+    toolchain_dir(root).join(format!("clangd_{CLANGD_VERSION}"))
+}
+
+/// Bundled clangd, if its (separate, smaller) download is ready.
+pub fn bundled_clangd(root: &Path) -> Option<PathBuf> {
+    let p = clangd_dir(root).join("bin").join(exe("clangd"));
+    p.exists().then_some(p)
+}
+
+/// `(os, arch)` -> wasi-sdk release asset name. `None` for unsupported
+/// combinations - the caller just stays on the podman/host-PATH fallback.
+fn wasi_sdk_asset() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Some("wasi-sdk-34.0-x86_64-linux.tar.gz"),
+        ("linux", "aarch64") => Some("wasi-sdk-34.0-arm64-linux.tar.gz"),
+        ("macos", "x86_64") => Some("wasi-sdk-34.0-x86_64-macos.tar.gz"),
+        ("macos", "aarch64") => Some("wasi-sdk-34.0-arm64-macos.tar.gz"),
+        ("windows", "x86_64") => Some("wasi-sdk-34.0-x86_64-windows.tar.gz"),
+        ("windows", "aarch64") => Some("wasi-sdk-34.0-arm64-windows.tar.gz"),
+        _ => None,
+    }
+}
+
+/// `os` -> clangd release asset name (clangd ships one build per OS, not
+/// per-arch - e.g. the mac build covers both x86_64 and arm64).
+fn clangd_asset() -> Option<&'static str> {
+    match std::env::consts::OS {
+        "linux" => Some("clangd-linux-22.1.6.zip"),
+        "macos" => Some("clangd-mac-22.1.6.zip"),
+        "windows" => Some("clangd-windows-22.1.6.zip"),
+        _ => None,
+    }
+}
+
+/// Download/assemble the bundled wasi-sdk toolchain (clang++, clang-format,
+/// wasm-ld, the wasm32-wasip1 sysroot) and clangd. Blocking; call from a
+/// background thread at startup (mirrors `sandbox::ensure_sandbox_image()`).
+pub fn ensure_wasi_toolchain(root: &Path) {
+    let Some(sdk_asset) = wasi_sdk_asset() else {
         set_state(
             3,
-            "wasm-ld not found (install LLVM's lld) - falling back to podman for all compile/run"
-                .into(),
+            format!(
+                "unsupported platform {}-{} for bundled wasi-sdk - falling back to podman",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            ),
         );
         return;
-    }
+    };
 
     let dir = toolchain_dir(root);
-    let sysroot = sysroot_dir(root);
-    let resdir = resource_dir(root);
-    if sysroot.join("include").exists() && resdir.join("include").exists() {
-        set_state(2, format!("wasi toolchain ready ({})", sysroot.display()));
-        return;
-    }
-    set_state(1, "assembling wasi toolchain...".into());
+    let sdk = sdk_dir(root);
     if let Err(e) = std::fs::create_dir_all(&dir) {
         set_state(3, format!("creating {}: {e}", dir.display()));
         return;
     }
 
-    for (asset, dest_name) in [
-        (
-            format!("wasi-sysroot-{WASI_SDK_VERSION}.tar.gz"),
-            "wasi-sysroot.tar.gz",
-        ),
-        (
-            format!("libclang_rt-{WASI_SDK_VERSION}.tar.gz"),
-            "libclang_rt.tar.gz",
-        ),
-    ] {
-        let dest = dir.join(dest_name);
-        if dest.exists() {
-            continue;
-        }
-        let url = format!("{BASE_URL}/{WASI_SDK_TAG}/{asset}");
-        set_state(1, format!("downloading {asset}..."));
-        if let Err(e) = download_blocking(&url, &dest) {
-            set_state(3, format!("downloading {asset}: {e}"));
+    if !bin_dir(root).join(exe("clang++")).exists() {
+        set_state(1, format!("downloading {sdk_asset}..."));
+        let archive = dir.join("wasi-sdk.tar.gz");
+        let url = format!("{WASI_SDK_BASE_URL}/{WASI_SDK_TAG}/{sdk_asset}");
+        if let Err(e) = download_blocking(&url, &archive) {
+            set_state(3, format!("downloading {sdk_asset}: {e}"));
             return;
         }
-    }
-    for (archive, _label) in [
-        ("wasi-sysroot.tar.gz", "sysroot"),
-        ("libclang_rt.tar.gz", "builtins"),
-    ] {
+        set_state(1, "extracting wasi-sdk...".into());
+        // Extract the whole archive, unfiltered. An earlier version tried to
+        // extract only the wasm32-wasip1 subset of the sysroot (dropping
+        // wasip1-threads/wasip2/wasip3, which we never target) to save
+        // disk - that silently broke clang's eh/noeh header selection
+        // (`#include <iostream>` failed to resolve) for reasons not worth
+        // chasing further: the sysroot's directory *shape* apparently
+        // matters to clang's multilib detection in a way that isn't
+        // documented, and a broken toolchain is worse than an extra ~300MB
+        // on disk for what's already a large one-time download.
+        let top = format!(
+            "wasi-sdk-{}-{}",
+            WASI_SDK_VERSION,
+            sdk_asset
+                .strip_prefix(&format!("wasi-sdk-{WASI_SDK_VERSION}-"))
+                .and_then(|s| s.strip_suffix(".tar.gz"))
+                .unwrap_or("x86_64-linux")
+        );
         let out = std::process::Command::new("tar")
-            .args(["xzf", archive])
+            .arg("xzf")
+            .arg(&archive)
             .current_dir(&dir)
             .output();
         match out {
@@ -144,27 +196,50 @@ pub fn ensure_wasi_toolchain(root: &Path) {
                 set_state(
                     3,
                     format!(
-                        "extracting {archive}: {}",
+                        "extracting wasi-sdk: {}",
                         String::from_utf8_lossy(&o.stderr)
                     ),
                 );
                 return;
             }
             Err(e) => {
-                set_state(3, format!("extracting {archive}: {e}"));
+                set_state(3, format!("extracting wasi-sdk: {e}"));
                 return;
             }
         }
+        let extracted = dir.join(&top);
+        if extracted != sdk {
+            if let Err(e) = std::fs::rename(&extracted, &sdk) {
+                set_state(
+                    3,
+                    format!("renaming {} -> {}: {e}", extracted.display(), sdk.display()),
+                );
+                return;
+            }
+        }
+        let _ = std::fs::remove_file(&archive);
     }
-    let _ = std::fs::remove_file(dir.join("wasi-sysroot.tar.gz"));
-    let _ = std::fs::remove_file(dir.join("libclang_rt.tar.gz"));
 
-    if let Err(e) = build_resource_dir_overlay(&dir, &resdir) {
-        set_state(3, format!("building resource-dir overlay: {e}"));
-        return;
+    if let Some(cd_asset) = clangd_asset() {
+        if !clangd_dir(root).join("bin").join(exe("clangd")).exists() {
+            set_state(1, format!("downloading clangd {cd_asset}..."));
+            let archive = dir.join("clangd.zip");
+            let url = format!("{CLANGD_BASE_URL}/{CLANGD_VERSION}/{cd_asset}");
+            if let Err(e) = download_blocking(&url, &archive) {
+                // clangd is a separate, smaller nicety (LSP) - don't fail
+                // the whole compile/run toolchain over it.
+                tracing::warn!("clangd download failed, falling back to host PATH: {e}");
+            } else {
+                let ok = extract_zip(&archive, &dir);
+                if let Err(e) = ok {
+                    tracing::warn!("clangd extraction failed, falling back to host PATH: {e}");
+                }
+                let _ = std::fs::remove_file(&archive);
+            }
+        }
     }
 
-    set_state(2, format!("wasi toolchain ready ({})", sysroot.display()));
+    set_state(2, format!("wasi toolchain ready ({})", sdk.display()));
 }
 
 fn download_blocking(url: &str, dest: &Path) -> Result<(), String> {
@@ -176,51 +251,26 @@ fn download_blocking(url: &str, dest: &Path) -> Result<(), String> {
     std::fs::write(dest, &bytes).map_err(|e| e.to_string())
 }
 
-/// Symlink the host clang's own resource dir (includes, native-arch libs)
-/// and add the wasm32 compiler-rt builtins from `libclang_rt-*.tar.gz` -
-/// see `src_v2/toolchain/setup.sh` for the reasoning (clang needs both its
-/// native builtins and the wasm32 ones, and copying 86MB of headers is
-/// wasteful when a symlink works).
-fn build_resource_dir_overlay(toolchain_dir: &Path, resdir: &Path) -> Result<(), String> {
-    let host_resdir = std::process::Command::new("clang++")
-        .arg("-print-resource-dir")
+/// `unzip` on Linux/macOS; Windows' built-in `tar.exe` (bsdtar) reads zip
+/// archives directly via `tar -xf`, so no separate zip tool is needed there.
+fn extract_zip(archive: &Path, dest_dir: &Path) -> Result<(), String> {
+    let mut cmd = if cfg!(windows) {
+        let mut c = std::process::Command::new("tar");
+        c.arg("-xf").arg(archive);
+        c
+    } else {
+        let mut c = std::process::Command::new("unzip");
+        c.arg("-q").arg(archive);
+        c
+    };
+    let out = cmd
+        .current_dir(dest_dir)
         .output()
         .map_err(|e| e.to_string())?;
-    let host_resdir = String::from_utf8_lossy(&host_resdir.stdout)
-        .trim()
-        .to_string();
-    let host_resdir = PathBuf::from(host_resdir);
-
-    std::fs::create_dir_all(resdir.join("lib")).map_err(|e| e.to_string())?;
-    symlink_force(&host_resdir.join("include"), &resdir.join("include"))?;
-    for entry in std::fs::read_dir(host_resdir.join("lib")).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        symlink_force(&entry.path(), &resdir.join("lib").join(entry.file_name()))?;
-    }
-
-    let libclang_rt = toolchain_dir.join(format!("libclang_rt-{WASI_SDK_VERSION}"));
-    let target = "wasm32-unknown-wasip1";
-    let src = libclang_rt.join(target).join("libclang_rt.builtins.a");
-    let dest_dir = resdir.join("lib").join(target);
-    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
-    std::fs::copy(&src, dest_dir.join("libclang_rt.builtins.a")).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[cfg(unix)]
-fn symlink_force(target: &Path, link: &Path) -> Result<(), String> {
-    let _ = std::fs::remove_file(link);
-    std::os::unix::fs::symlink(target, link).map_err(|e| e.to_string())
-}
-
-#[cfg(windows)]
-fn symlink_force(target: &Path, link: &Path) -> Result<(), String> {
-    let _ = std::fs::remove_dir_all(link);
-    let _ = std::fs::remove_file(link);
-    if target.is_dir() {
-        std::os::windows::fs::symlink_dir(target, link).map_err(|e| e.to_string())
+    if out.status.success() {
+        Ok(())
     } else {
-        std::os::windows::fs::symlink_file(target, link).map_err(|e| e.to_string())
+        Err(String::from_utf8_lossy(&out.stderr).into_owned())
     }
 }
 
@@ -248,14 +298,13 @@ fn compile(
     inc: &str,
     std: &str,
     out: &Path,
-) -> std::io::Result<std::process::Output> {
+) -> Result<std::process::Output, String> {
+    let clangxx = bundled_clangxx(root).ok_or("bundled clang++ not ready")?;
     let sysroot = sysroot_dir(root);
-    let resdir = resource_dir(root);
-    std::process::Command::new("clang++")
+    std::process::Command::new(clangxx)
         .current_dir(dir)
         .arg("--target=wasm32-wasip1")
         .arg(format!("--sysroot={}", sysroot.display()))
-        .arg(format!("-resource-dir={}", resdir.display()))
         .arg(format!("-std={std}"))
         .arg("-O2")
         .arg("-Wall")
@@ -276,6 +325,7 @@ fn compile(
         .arg("-o")
         .arg(out)
         .output()
+        .map_err(|e| e.to_string())
 }
 
 /// Mirrors podman's `--memory` limit for the run stage.
