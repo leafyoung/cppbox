@@ -235,14 +235,15 @@ AGENTS.md, `-std=c++20` only for the two modules that name it explicitly —
 the first audit pass had wrongly forced `-std=c++20` everywhere, which
 produced a few false failures, corrected below).
 
-**Final result: 73/77 directories compile cleanly.** The first pass found
-13 failing directories; after checking each individually (including native
-`-stdlib=libc++` compiles, to separate "wasm-specific" from
-"libc++-specific" from "pre-existing/unrelated"), 11 turned out to be
-small, genuine source bugs — unrelated to wasm, but only surfaced because
-this was the first time this content had been compiled with libc++/clang++
-in this exact configuration — and have been fixed directly in the course
-repos:
+**Final result: 74/77 directories compile cleanly — only one real,
+unaddressed gap left (`std::execution::par`) across the whole two-course
+sample set.** The first pass found 13 failing directories; after checking
+each individually (including native `-stdlib=libc++` compiles, to separate
+"wasm-specific" from "libc++-specific" from "pre-existing/unrelated"), 12
+turned out to be small, genuine source bugs — unrelated to wasm, but only
+surfaced because this was the first time this content had been compiled
+with libc++/clang++ in this exact configuration — and have been fixed
+directly in the course repos:
 
 - **`std::valarray` was never actually missing** — this was **wrong** in
   the first pass of this audit and is corrected here. `52-mc_gbm/gbm_multi.h`
@@ -274,22 +275,22 @@ repos:
   third-party date library with C++20's own chrono calendar support is
   what caused the original ambiguous-overload error) and compiles cleanly
   once the audit uses the right standard version.
-- **Two libc++-vs-libstdc++ portability gaps, real but *not* wasm-specific**
+- **One libc++-vs-libstdc++ portability gap, real but *not* wasm-specific**
   (`54-thread/test_thread.cpp` needed an explicit `#include <functional>`
   for `std::ref` that libstdc++ provides transitively and libc++ doesn't)
   — fixed with the include. This is a genuine migration cost from
   switching standard library implementations, independent of podman vs.
   wasm, worth knowing before Phase 1.
-- **`96-test-quantlib-xtensor-eigen`: Eigen and xtensor now vendored and
-  working; QuantLib remains unaddressed.** Per the user's request, Eigen
+- **`96-test-xtensor-eigen`** (renamed from `96-test-quantlib-xtensor-eigen`
+  after removing its QuantLib section — QuantLib is a compiled library,
+  not header-only like Eigen/xtensor, and wasn't part of the ask): Eigen
   3.4.1 and xtensor 0.24.7 + xtl 0.7.5 (version-matched — see below) were
-  downloaded into `FN6806/FN6806/third_party/` and both compile and work
+  downloaded into `FN6806/FN6806/third_party/`, and both compile and work
   under this target (confirmed by compiling the actual Eigen/xtensor code
-  in this file, not just resolving the includes). QuantLib is a
-  compiled library, not header-only, and wasn't requested — the file
-  still fails on `#include <ql/math/array.hpp>`. `52-mc_gbm`'s optional
-  Eigen path (`gbm_multi_thread_eigen.*`, gated by `__has_include`) now
-  compiles too, as a side effect of the same vendoring.
+  in this file, not just resolving the includes) — this directory now
+  compiles cleanly. `52-mc_gbm`'s optional Eigen path
+  (`gbm_multi_thread_eigen.*`, gated by `__has_include`) compiles too, as a
+  side effect of the same vendoring.
 - **Two directories correctly left untouched**: `30-header-file` and
   `72-multiple_inclusion` are documented in `FN6805/AGENTS.md` as
   **intentionally uncompilable teaching examples** — "the link errors are
@@ -328,11 +329,12 @@ polyfill (`xspan_impl.hpp`) calls `std::terminate()` without including
 - ~~The "which files belong together" heuristic...~~ — **resolved**: the
   audit script now uses each course's own documented build unit (whole
   directory for FN6806, matching its own AGENTS.md) and per-module
-  standard version instead of a blanket guess; re-run clean at 73/77.
-- QuantLib remains unaddressed for `96-test-quantlib-xtensor-eigen` — it's
-  a compiled library, not header-only like Eigen/xtensor, and wasn't
-  requested. Getting it to cross-compile to wasm32-wasip1-threads would be
-  a separate, nontrivial project if ever wanted.
+  standard version instead of a blanket guess; re-run clean at 74/77.
+- ~~QuantLib remains unaddressed for `96-test-quantlib-xtensor-eigen`~~ —
+  **resolved**: the QuantLib section was removed from that sample
+  (renamed to `96-test-xtensor-eigen`) rather than vendoring QuantLib,
+  which is a compiled library, not header-only like Eigen/xtensor, and
+  would be a separate, nontrivial project if ever wanted.
 - The vendored `third_party/eigen3`, `third_party/xtensor`, and
   `third_party/xtl` in `FN6806/FN6806` are pinned to specific versions
   chosen for compatibility with the existing `#include` paths and each
