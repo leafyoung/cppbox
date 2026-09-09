@@ -10,8 +10,10 @@ macOS (dmg, arm64 + x86_64) via GitHub Actions on a `v*` tag.
 CPPBox (Tauri binary)
   └─ spawns axum server on 127.0.0.1:<dynamic> (in-process, tokio)
       ├─ API + admin (crates/cppbox-core)
-      ├─ clangd LSP (/ws/lsp) + clang-format/syntax (host)
-      └─ podman compile/run (cpp-sandbox image)
+      ├─ clangd LSP (/ws/lsp) + clang-format/syntax
+      │     (bundled wasm32-wasip1 toolchain, falls back to host)
+      ├─ compile+run (wasmtime, falls back to podman for thread-using code)
+      └─ debug (lldb-dap, native when available, falls back to podman)
   └─ opens a webview to http://127.0.0.1:{port}
 ```
 
@@ -52,8 +54,11 @@ The CI `publish-sandbox-image` job pushes `ghcr.io/leafyoung/cppbox-sandbox:<tag
 export CPPBOX_SANDBOX_IMAGE=ghcr.io/leafyoung/cppbox-sandbox:v0.1.0
 ```
 
-On first launch the backend pulls it if missing (`podman pull`). Podman must be
-installed; on macOS/Windows a `podman machine` must be running.
+On first launch the backend pulls it if missing (`podman pull`) - but only
+matters when podman is actually in use: thread-using student code, or any
+host where the bundled wasm32-wasip1 toolchain isn't ready (see
+`docs/WASM_PLAN.md`). Podman must be installed for that path; on
+macOS/Windows a `podman machine` must be running.
 
 ## Cutting a release
 

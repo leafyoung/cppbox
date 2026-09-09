@@ -34,9 +34,14 @@ Pre-commit (`prek`, config in `.pre-commit-config.yaml`): hygiene checks,
 `cargo fmt --all` (aborts the commit if it rewrites files — re-stage after),
 and `node --check worker/src/index.js`.
 
-Requires **podman** (docker as fallback) on the host for compile/run
-sandboxing; on first launch the backend pulls `cppbox-sandbox` from ghcr.io
-if missing.
+Compile/run/debug prefer a bundled wasm32-wasip1 toolchain (`clang++` +
+`wasmtime`, no host install, downloaded once on first launch — see
+`docs/WASM_PLAN.md`) over **podman** (docker as fallback); podman remains
+the fallback when that toolchain isn't ready, and stays required for
+thread-using student code (`wasm32-wasip1-threads` is confirmed
+non-functional upstream) and, unless the host also has `lldb-dap`, for
+debugging. On first launch the backend pulls `cppbox-sandbox` from
+ghcr.io if missing, same as before.
 
 ## Architecture
 
@@ -44,8 +49,10 @@ if missing.
 CPPBox (Tauri binary)
   └─ spawns axum server on 127.0.0.1:<dynamic> (in-process, tokio)
       ├─ API + admin routes      (crates/cppbox-core)
-      ├─ clangd LSP (/ws/lsp) + clang-format/syntax (host process)
-      └─ podman compile/run      (cppbox-sandbox image)
+      ├─ clangd LSP (/ws/lsp) + clang-format/syntax
+      │     (bundled wasm32-wasip1 toolchain, falls back to host install)
+      ├─ compile+run              (wasmtime, falls back to podman)
+      └─ debug (lldb-dap)         (native host process, falls back to podman)
   └─ opens a webview to http://127.0.0.1:{port}
 ```
 
@@ -57,11 +64,16 @@ CPPBox (Tauri binary)
   - `admin.rs` — teacher-facing API: classes, student import, assignments,
     key minting, submission pull/organize, marking grid, submit endpoint,
     workspace-open, VS Code info.
-  - `sandbox.rs` — podman/docker invocation (prefers podman, rootless),
-    image pull/smoke-test, ulimited compile+run.
+  - `sandbox.rs` — compile/run/format/syntax-check + podman/docker
+    invocation (prefers podman, rootless) as the fallback for thread-using
+    code or when the bundled wasm toolchain isn't ready.
+  - `wasi_exec.rs` — the bundled wasm32-wasip1 toolchain: fetches/assembles
+    it (native `clang++`/`clang-format`/`wasm-ld` from wasi-sdk's own
+    release, `clangd` separately), and `wasmtime`-sandboxed execution.
   - `storage.rs` — project file tree / snapshot / git-commit-on-submit logic.
   - `lsp.rs` / `debug.rs` — WebSocket bridges to clangd and to a debugger,
-    one process per WS session (no pooling).
+    one process per WS session (no pooling); `debug.rs` runs natively (no
+    podman) when the host has `clang++`/`lldb-dap`.
   - `db.rs` — sqlite via sqlx; **migrations are inline `CREATE TABLE IF NOT
     EXISTS` statements in `migrate()`**, not a migration-file tool.
   - `settings.rs` — user prefs at `~/.cppbox/cppbox.yaml` (theme, font size,

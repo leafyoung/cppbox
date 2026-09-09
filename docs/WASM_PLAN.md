@@ -264,15 +264,20 @@ produced the correct output, clean exit — confirming `norm_path`'s
 prefix-stripping produces the same relative paths (`main.cpp`, not an
 absolute host path) the frontend already expects from the podman path.
 
-**Phase 4 — shrink podman to "thread-using assignments only", not drop it
-entirely.** Update `CLAUDE.md`, `ensure_sandbox_image()`/`sandbox_status`,
-`Dockerfile.sandbox`, and `DEPLOY.md` to describe podman as a narrow,
-assignment-scoped fallback rather than the universal execution backend.
-Retire `src_v2`/`frontend_v2` by merging into `crates/cppbox-core`/
-`frontend` (or renaming) once Phases 1-3 are validated. Fully dropping
-podman is now conditional on wasi-threads maturing upstream — track via
-the smallest repro (`src_v2/examples/threads_minimal`), don't block the
-rest of the migration on it.
+**Phase 4 — partly done.** `CLAUDE.md` and `DEPLOY.md` now describe podman
+as the fallback (thread-using code, or a host where the bundled toolchain
+isn't ready / lacks `lldb-dap`) rather than the universal execution
+backend — matching what Phases 1-3 actually built.
+`ensure_sandbox_image()`/`sandbox_status`/`Dockerfile.sandbox` are
+unchanged (podman itself still works exactly as before for the cases that
+still need it, so there was nothing to update there beyond the docs).
+Not done: retiring `src_v2`/`frontend_v2` by merging into
+`crates/cppbox-core`/`frontend` — left as-is for now since they're
+harmless reference material (the Phase 0 spike + its README, which still
+document findings not repeated elsewhere), not blocking anything. Fully
+dropping podman remains conditional on wasi-threads maturing upstream —
+track via the smallest repro (`src_v2/examples/threads_minimal`), don't
+block on it.
 
 ## Pinned toolchain versions and real download sizes
 
