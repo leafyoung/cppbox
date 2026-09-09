@@ -1,14 +1,38 @@
 //! Multithreaded matrix: wasm32-wasip1-threads + wasmtime-wasi-threads.
 //!
-//! This follows the same pattern wasmtime's own CLI uses (see
-//! `Host`/`unwrap_singlethread_context` in bytecodealliance/wasmtime's
-//! `src/commands/run.rs`): the store data must be `Clone` for
-//! `wasi-threads` to spawn per-thread `Store`s, so `WasiP1Ctx` is wrapped in
-//! `Arc<Mutex<..>>` and accessed via `Arc::get_mut(..).expect(..)`. That
-//! `expect` is the tell: wasmtime's own maintainers flag WASIp1 as "not
-//! actually compatible with wasi-threads" for concurrent access - it panics
-//! if two live thread clones both hold the Arc when a WASI call happens.
-//! We report exactly what we observe rather than papering over it.
+//! **Confirmed non-functional as of wasi-sdk-34 + wasmtime-46.0.3 - this is
+//! a go/no-go finding, not a TODO.** Reproduced against wasmtime's own
+//! official CLI binary (not just this harness), isolated to two distinct,
+//! independently-confirmed bugs:
+//!
+//! 1. `wasmtime-wasi`'s `WasiP1Ctx` isn't `Clone`, and `wasmtime-wasi-threads`
+//!    requires `Store<T>`'s `T: Clone` (each spawned thread gets its own
+//!    `Store`). The pattern wasmtime's own CLI uses - wrap it in
+//!    `Arc<Mutex<WasiP1Ctx>>`, access via `Arc::get_mut(..).expect(..)` - is
+//!    documented in their own source as "not actually compatible with
+//!    wasi-threads" for concurrent access. **Fixed here** by moving (not
+//!    cloning) the host state into the `Store` so exactly one owner exists
+//!    once execution starts.
+//! 2. Past that, spawning a thread still traps with `uninitialized element`
+//!    inside `wasi_thread_start`, for the simplest possible case (one
+//!    spawn, a zero-argument free function, no lambda). Root-caused via
+//!    `wasm-tools print` + reproduced identically on wasmtime's official
+//!    prebuilt CLI (`wasmtime run -W threads=y -S threads=y`): the compiled
+//!    module's `call_indirect` for the thread's entry point resolves to an
+//!    empty table slot in the *spawned* instance. wasi-threads' model
+//!    re-instantiates the whole module per thread and only shares linear
+//!    memory, not the function table's dynamic setup - some table content
+//!    that the main instance's startup path establishes apparently isn't
+//!    re-established for `wasi_thread_start`-only instantiation. This is
+//!    upstream wasi-threads/wasi-libc-34 ecosystem immaturity, not a config
+//!    knob or a bug in this harness. Not fixed; not planned to be within
+//!    this project - see docs/WASM_PLAN.md for the resulting go/no-go call.
+//!
+//! (A separate, *fixed* red herring along the way: the module's shared
+//! memory defaulted to `max=2 pages` (128KB), so plain thread-stack
+//! allocation failed before ever reaching the table bug -
+//! `Toolchain::compile`'s `--initial-memory`/`--max-memory` flags fix this
+//! for every target, not just threads.)
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};

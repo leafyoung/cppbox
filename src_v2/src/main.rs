@@ -79,7 +79,16 @@ impl Toolchain {
             .arg("-mllvm")
             .arg("-wasm-enable-eh")
             .arg("-mllvm")
-            .arg("-wasm-use-legacy-eh=false");
+            .arg("-wasm-use-legacy-eh=false")
+            // Unlike native, wasm linear memory has a size wasm-ld must fix
+            // at link time; the default is just "whatever static data
+            // needs" (as low as 2 pages / 128KB), which a real program's
+            // heap/stack blows through immediately - confirmed against the
+            // course sample set (`73-cache_locality` needs ~40MB just for
+            // its arrays). 16MB initial / 256MB max is generous headroom,
+            // not a hard student-code limit.
+            .arg("-Wl,--initial-memory=16777216")
+            .arg("-Wl,--max-memory=268435456");
         if threads {
             cmd.arg("-pthread");
         }

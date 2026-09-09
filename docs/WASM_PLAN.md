@@ -1,11 +1,15 @@
-# WASM migration plan (Option A)
+# WASM migration plan (Option A, hybrid on threading)
 
-Status: **approved, Phase 0 complete for single-threaded execution; threads
-not yet working (see below)**. Supersedes the open-ended
-exploration in [WASM.md](WASM.md) with a concrete decision and phased plan.
-Work happens in `src_v2/` (backend) and `frontend_v2/` (frontend) alongside
-the current `crates/cppbox-core` + `frontend/`, until a phase is proven out
-and cut over.
+Status: **Phase 0 complete, including the threading go/no-go gate.
+Verdict: threading is confirmed non-functional on wasm32-wasip1-threads
+today, and the curriculum does need it (FN6806 has ~6 threading-focused
+lessons) — so the plan is now a hybrid: Option A (wasmtime) for everything
+single-threaded, native/podman execution kept specifically for
+thread-using assignments.** Supersedes the open-ended exploration in
+[WASM.md](WASM.md) with a concrete decision and phased plan. Work happens
+in `src_v2/` (backend) and `frontend_v2/` (frontend) alongside the current
+`crates/cppbox-core` + `frontend/`, until a phase is proven out and cut
+over.
 
 ## Decision
 
@@ -62,7 +66,7 @@ pre-installed.
 | Multi-file projects | ★★★★★ | Same `clang++` invocation shape as today, just a different `--target` |
 | libc++ stdlib coverage (vector/string/algorithm/map/iostream) | ★★★★★ | Ships in the wasi-sysroot |
 | `<filesystem>`, exceptions, templates | ★★★★★ | Confirmed in Phase 0 — real C++ exceptions work (throw/catch, `.at()`), given the right (undocumented) clang/wasi-sysroot flag combination; see `src_v2/README.md` |
-| `std::thread`/`std::atomic`/`std::mutex`/condvar | ★☆☆☆☆ | Confirmed **not working** in Phase 0 with wasi-sdk-34 + wasmtime-46: `std::thread`'s constructor throws before the host is ever called. Not required for MVP; revisit if curriculum needs it |
+| `std::thread`/`std::atomic`/`std::mutex`/condvar | ★☆☆☆☆ | **Confirmed non-functional** (go/no-go gate, not a nice-to-have) — see "Threading go/no-go" below |
 | `clang-format`/`clangd`/syntax-check bundling (no wasm needed) | ★★★★★ | Just ship native binaries with the app instead of requiring PATH install — independent of the wasm decision |
 | Debugging (`lldb-dap` via ptrace) | ★★☆☆☆ | No wasm equivalent to ptrace; DWARF-based custom debugger is real, separate engineering — deferred (Phase 3) |
 
@@ -78,22 +82,79 @@ pre-installed.
   --target=wasm32-wasip1` + `wasmtime` sandboxing is a working replacement
   for podman on ordinary teaching C++, no LLVM rebuild or wasm port of the
   compiler needed.
-- **Multithreaded matrix not working.** `wasmtime-wasi`'s `WasiP1Ctx` isn't
-  `Clone`-compatible with `wasmtime-wasi-threads`'s per-thread `Store`
-  requirement in the way wasmtime's own CLI works around it (fixed in
-  `src_v2`), but past that, every threaded test throws inside `std::thread`'s
-  constructor *before* the host's `wasi::thread-spawn` import is ever
-  called — a real toolchain-immaturity finding (wasi-sdk-34 pthread runtime
-  init vs. wasmtime-46's wasi-threads support), not a bug in our harness.
-  Confirms the risk flagged below rather than papering over it. Does not
-  block Phase 1: no curriculum content requiring `std::thread` was found in
-  `docs/`, and Option A's core value (dropping podman for ordinary
-  compile+run) doesn't need it.
+- **Multithreaded matrix: confirmed non-functional — see below.**
 
-**Phase 1 — replace `compile_and_run`/`make_and_run` internals.** Swap the
-podman subprocess calls in `sandbox.rs` for `wasmtime` calls behind the same
-function signatures. `routes.rs`, `admin.rs`, and the frontend are untouched
-— `sandbox.rs` is already the right abstraction boundary.
+## Threading go/no-go
+
+Threading was re-scoped from "nice to have" to a **hard go/no-go gate**:
+`~/work/MFEg/FN6806/FN6806` (one of the two course repos, audited below) has
+six threading-focused lesson directories (`54-thread`, `55-thread-atomic`,
+`56-thread-struct`, `71-multithread_mc_pi`, `72-thread-mtx-cv`,
+`73-thread-local-prng`), including `std::future`/`std::async`. This isn't
+optional content.
+
+**Verdict: does not work today, on wasm32-wasip1-threads + wasmtime-46.0.3,
+even for the simplest possible case** (spawn one thread running a
+zero-argument free function, no captures, no atomics). Reproduced
+identically against wasmtime's own official prebuilt CLI binary
+(`wasmtime run -W threads=y -W shared-memory=y -S threads=y`), not just
+this project's harness — so this is not a bug in `src_v2`. Two distinct
+issues were found and isolated:
+
+1. **Fixed**: `wasmtime-wasi`'s `WasiP1Ctx` isn't `Clone`, and
+   `wasmtime-wasi-threads` requires `Store<T>`'s `T: Clone` (each spawned
+   thread gets its own `Store`). wasmtime's own CLI works around this with
+   `Arc<Mutex<WasiP1Ctx>>` + `Arc::get_mut(..).expect(..)` — documented in
+   their own source as "not actually compatible with wasi-threads" for
+   concurrent access. `src_v2/src/threads.rs` fixes this by moving (not
+   cloning) the host state into the `Store` so exactly one owner exists
+   once execution starts.
+2. **Fixed** (a real, general finding, not threading-specific): the
+   compiled module's shared memory defaulted to `max=2 pages` (128KB) —
+   nowhere near enough for a thread stack — because wasm-ld doesn't pick a
+   sane default; `-Wl,--initial-memory=16777216 -Wl,--max-memory=268435456`
+   fixes it. This one flag was also independently needed for a
+   non-threading course sample (`73-cache_locality`, ~40MB of static
+   arrays) — now applied unconditionally in `Toolchain::compile`.
+3. **Not fixed, not fixable within this project's scope**: past both of
+   those, thread spawning still traps with `uninitialized element` the
+   moment the spawned thread tries to call its own entry function — a
+   `call_indirect` into an empty function-table slot in the *newly spawned
+   instance*. Root-caused with `wasm-tools print`: wasi-threads'
+   multi-instance model re-instantiates the whole module per thread and
+   shares only linear memory, not whatever establishes the function
+   table's dynamic content — something the main instance's own startup
+   path sets up isn't re-established for a `wasi_thread_start`-only
+   instantiation. This is upstream wasi-threads/wasi-libc-34 ecosystem
+   immaturity (matches why the original WASM.md exploration steered
+   towards Emscripten over WASI specifically for thread support), not
+   something addressable by CPPBox-side configuration.
+
+**Resulting decision: hybrid, not a switch to Option B.** Rewriting the
+whole execution model around Emscripten-in-browser (Option B) just to get
+threading would throw away everything Phase 0 already proved works cleanly
+for the other ~90% of the curriculum, and would still need its own
+validation pass. Instead:
+
+- **Non-threaded compile+run**: `wasmtime` (Option A), per Phase 1 below.
+- **Thread-using assignments** (the six directories above): keep the
+  existing podman path (`sandbox.rs`'s current `compile_and_run` via
+  container), selected per-assignment rather than per-student-machine.
+  This is a deliberate, scoped exception, not "give up on removing
+  podman" — podman only needs to stay installed for a small, identifiable
+  slice of the course.
+- Revisit dropping podman entirely if/when wasi-threads matures upstream
+  (worth periodically re-testing `src_v2/examples/threads_minimal` against
+  new wasi-sdk/wasmtime releases — it's the smallest possible repro).
+
+**Phase 1 — replace `compile_and_run`/`make_and_run` internals for
+non-threaded assignments.** Swap the podman subprocess calls in
+`sandbox.rs` for `wasmtime` calls behind the same function signatures, with
+a per-assignment flag (or a cheap static check — does any source file
+`#include <thread>`/`<future>`/`<mutex>`/`<condition_variable>`?) choosing
+podman instead of wasmtime for the six thread-using directories identified
+above. `routes.rs`, `admin.rs`, and the frontend are otherwise untouched —
+`sandbox.rs` is already the right abstraction boundary.
 
 **Phase 2 — stop requiring host-installed clang-format/clangd/clang++.**
 Bundle native toolchain binaries (or a one-time download) instead of a
@@ -105,18 +166,127 @@ debugging their own process isn't an adversarial scenario, so the
 sandboxing podman gave `debug.rs` wasn't buying real security, just
 packaging. A real wasm/DWARF debugger is a separate, later project.
 
-**Phase 4 — drop podman/docker entirely.** Update `CLAUDE.md`,
-`ensure_sandbox_image()`/`sandbox_status`, `Dockerfile.sandbox`, and
-`DEPLOY.md` accordingly. Retire `src_v2`/`frontend_v2` by merging into
-`crates/cppbox-core`/`frontend` (or renaming) once Phase 1-3 are validated.
+**Phase 4 — shrink podman to "thread-using assignments only", not drop it
+entirely.** Update `CLAUDE.md`, `ensure_sandbox_image()`/`sandbox_status`,
+`Dockerfile.sandbox`, and `DEPLOY.md` to describe podman as a narrow,
+assignment-scoped fallback rather than the universal execution backend.
+Retire `src_v2`/`frontend_v2` by merging into `crates/cppbox-core`/
+`frontend` (or renaming) once Phases 1-3 are validated. Fully dropping
+podman is now conditional on wasi-threads maturing upstream — track via
+the smallest repro (`src_v2/examples/threads_minimal`), don't block the
+rest of the migration on it.
+
+## Pinned toolchain versions and real download sizes
+
+Compiler: whatever native `clang++` is already on the host (this project
+used Homebrew clang++ 23.1.0 — any reasonably recent clang with wasm32
+target support works, since the compiler itself isn't ported, see the
+Decision above).
+
+**wasm32-wasip1(-threads) sysroot: [`wasi-sdk-34`](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-34)**
+(2026; latest at time of writing). `src_v2` only needs two of its release
+assets, not the full SDK (which bundles a redundant second clang+lld):
+
+| Asset | Size | Used for |
+|---|---:|---|
+| `wasi-sysroot-34.0.tar.gz` | 114 MB | headers + libc/libc++/libc++abi, `eh`/`noeh` variants |
+| `libclang_rt-34.0.tar.gz` | 757 KB | wasm32 compiler-rt builtins (`libclang_rt.builtins.a`) |
+
+For reference, the *full* wasi-sdk bundle (own clang+lld+sysroot — **not**
+what this project downloads, listed only so the "why not just use this"
+tradeoff is explicit) per platform:
+
+| Platform | Full wasi-sdk-34.0 tarball |
+|---|---:|
+| Linux x86_64 | 184 MB (128 MB `.deb`) |
+| Linux arm64 | 184 MB (128 MB `.deb`) |
+| macOS x86_64 | 175 MB |
+| macOS arm64 | 172 MB |
+| Windows x86_64 | 591 MB |
+| Windows arm64 | 592 MB |
+
+**For Phase 2 (bundling clangd/clang-format/clang++ instead of requiring a
+host install)**: clangd publishes its own slim standalone releases (not
+the full LLVM distribution) — [`clangd/clangd` v22.1.6](https://github.com/clangd/clangd/releases/tag/22.1.6):
+
+| Platform | `clangd` release size |
+|---|---:|
+| Linux x86_64 | 109.5 MB |
+| macOS | 93.6 MB |
+| Windows | 26.9 MB |
+
+`clang-format` and `clang++` itself have **no equivalently slim standalone
+distribution** — the only official prebuilt source is the full
+[`llvm/llvm-project` release](https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.1)
+(v23.1.1: Linux X64 1.9 GB, macOS ARM64 1.5 GB, Windows 610-860 MB). Phase 2
+needs to decide between bundling that (a genuinely large download,
+comparable to or bigger than today's podman image pull) or continuing to
+require a native clang install for those two tools specifically — this
+tradeoff should be made explicit to the user/course, not glossed over.
+
+## Course content audit (FN6805 + FN6806)
+
+Compiled every `.cpp` file under `~/work/MFEg/FN6805/FN6805` and
+`~/work/MFEg/FN6806/FN6806` (146 files, 77 directories) against the pinned
+toolchain, targeting `wasm32-wasip1-threads` (the superset target — compiles
+non-threaded code identically to `wasm32-wasip1`) with the same flags
+`Toolchain::compile` uses. **64/77 directories compiled cleanly.** Of the
+13 that didn't, after checking each individually against a native
+`-stdlib=libc++` compile to separate "wasm-specific" from "libc++-specific"
+from "pre-existing/unrelated":
+
+- **Confirmed real wasm/wasi-sysroot gaps**: `std::valarray` is not
+  available at all (`52-mc_gbm`, and directly relevant to the dedicated
+  `50-valarray` lesson) — this was not a synthetic-subset finding, it's a
+  named lesson topic. `std::execution::par` (parallel STL execution
+  policies, `52-stl/test_for_each_parallel.cpp`) is also unavailable.
+- **Confirmed libc++-vs-libstdc++ portability gaps, *not* wasm-specific**
+  (reproduced identically compiling natively with `-stdlib=libc++`, no
+  wasm target involved): `std::ref` requires an explicit `<functional>`
+  include under libc++ that isn't needed under libstdc++'s transitive
+  includes (`54-thread/test_thread.cpp`); `unique_ptr` move-assignment
+  with an incomplete pointee type is stricter under libc++
+  (`3a-unique_ptr`). These would need small source fixes regardless of the
+  podman-vs-wasm decision, purely from switching standard library
+  implementations — worth knowing before Phase 1, not caused by it.
+- **Confirmed, already fixed**: initial/max memory sizing
+  (`73-cache_locality`, ~40MB of static arrays) — see the threading section
+  above; `Toolchain::compile` now sets generous defaults unconditionally.
+- **Out of scope, expected**: `96-test-quantlib-xtensor-eigen` needs Eigen
+  (`#include <eigen3/Eigen/Dense>`) — third-party numerical libraries need
+  their own wasm ports/vendoring, separate work, low priority (1/77
+  samples).
+- **Audit-script artifacts, not real findings**: several failures
+  (`30-header-file`, `72-multiple_inclusion`, `30a-template_specialize`)
+  were the audit script incorrectly compiling multiple independent
+  same-directory demo files together as one program (a "which files
+  belong together" heuristic problem in the throwaway test script, not in
+  `Toolchain::compile` itself, which always compiles a single known
+  project's file set). A few others (`22-operator`, `70-chrono`,
+  `90-et-infinite-loop`, `92-et-vec-benchmark`) look like pre-existing
+  source issues (a type error, a corrupted header, ambiguous overloads
+  from mixing a third-party date library with C++20's own — possibly
+  `-std=c++20`-specific, not necessarily wasm-related) and weren't chased
+  further; worth a second look before Phase 1 if any of those specific
+  lessons matter.
 
 ## Open risks to track
 
-- `wasm32-wasip1-threads` maturity in `wasmtime` — **confirmed broken** in
-  Phase 0 (see above and `src_v2/README.md`); tracked, not blocking.
+- ~~`wasm32-wasip1-threads` maturity in `wasmtime`~~ — **resolved (as a
+  finding, not a fix)**: confirmed broken, go/no-go gate answered "no" for
+  pure Option A, hybrid plan adopted. See "Threading go/no-go" above.
 - Any curriculum content that assumes Linux syscalls (`fork`, `socket`,
   `ptrace` from student code, not just the debugger) won't map to WASI —
-  none found in `docs/` as of this writing, but worth a deliberate check
-  before Phase 1 ships.
+  none found in the FN6805/FN6806 audit, but that audit checked
+  compilability, not a semantic/syscall-usage grep; worth a deliberate
+  check before Phase 1 ships.
 - wasi-sysroot/libclang_rt binaries are ~100MB+ and must **not** be
   committed to git — `src_v2` fetches them into a local cache, gitignored.
+- Phase 2's toolchain-bundling size tradeoff (clangd has a slim standalone
+  release; clang-format/clang++ don't — see "Pinned toolchain versions"
+  above) needs an explicit decision, not a default assumption that
+  bundling is free.
+- The "which files belong together" heuristic in the throwaway course-audit
+  script produced a few false-positive failures (see audit section above)
+  — if this audit is ever re-run/extended, that heuristic needs fixing
+  first, or results re-checked by hand for newly-failing directories.

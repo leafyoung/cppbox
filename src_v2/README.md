@@ -18,6 +18,11 @@ cargo run -p cppbox-wasi-poc
 fetch the upstream `wasi-sysroot`/`libclang_rt` release tarballs from
 `WebAssembly/wasi-sdk`). See the script for what it assembles and why.
 
+Expect the multithreaded matrix to end the process with a Rust panic (exit
+code 101, not a clean `[FAIL]` line) - that's the confirmed upstream bug
+below surfacing through an abrupt thread-panic-then-orphaned-Arc cascade,
+not a bug worth catching gracefully in this throwaway harness.
+
 ## Results (wasmtime 46.0.3, wasi-sdk 34.0, Homebrew clang++ 23.1.0)
 
 **Single-threaded matrix (`wasm32-wasip1`): 8/8 pass.** hello, multifile
@@ -28,7 +33,7 @@ the actual deliverable: ordinary teaching C++ compiles and runs correctly
 under `wasmtime`, with real exceptions, real timeouts, and no host-installed
 LLVM required by the *executing* side.
 
-Two non-obvious toolchain findings, now encoded as comments in
+Three non-obvious toolchain findings, now encoded as comments in
 `Toolchain::compile` (`src/main.rs`) so they aren't relearned next time:
 
 - The wasi-sysroot ships **two** libc++/libc++abi builds per target - a
@@ -42,35 +47,58 @@ Two non-obvious toolchain findings, now encoded as comments in
   `try_table` encoding wasmtime does support. Found by cross-referencing
   `wasm-ld`/wasmtime error text against `llc -mattr=help`; not documented
   anywhere obvious.
+- Unlike native compilation, wasm linear memory has a size wasm-ld fixes at
+  link time, and the default is just "whatever static data needs" (as low
+  as 2 pages / 128KB) - nowhere near enough for a real program's heap/stack
+  (confirmed against a course sample needing ~40MB for static arrays, and
+  separately against thread-stack allocation, see below).
+  `-Wl,--initial-memory=16777216 -Wl,--max-memory=268435456` is now applied
+  unconditionally.
 
-**Multithreaded matrix (`wasm32-wasip1-threads`): not working, root cause
-narrowed but not fixed.** Two distinct issues surfaced:
+**Multithreaded matrix (`wasm32-wasip1-threads`): confirmed non-functional
+— this is a go/no-go finding, not a TODO.** Threading was re-scoped to a
+hard requirement (the actual course content, `~/work/MFEg/FN6806`, has six
+threading lessons including `std::future`/`std::async`), so this needed a
+definitive answer, not "revisit later." Reproduced identically against
+wasmtime's own official prebuilt CLI binary (`wasmtime run -W threads=y -W
+shared-memory=y -S threads=y examples/threads_minimal/*.wasm`), not just
+this project's harness. Three issues, isolated in order:
 
-1. `wasmtime-wasi`'s `WasiP1Ctx` isn't `Clone`, and `wasmtime-wasi-threads`
-   requires `Store<T>`'s `T: Clone` (each spawned thread gets its own
-   `Store`). The pattern wasmtime's own CLI uses - wrap it in
-   `Arc<Mutex<WasiP1Ctx>>`, access via `Arc::get_mut(..).expect(..)` - is
-   documented in their own source as "not actually compatible with
-   wasi-threads" for concurrent access; it panics if two live clones both
-   exist when a WASI call happens. **This part is fixed** in `threads.rs`
-   by moving (not cloning) the host state into the `Store` so exactly one
-   owner exists once execution starts.
-2. Even past that, every threaded test case throws inside `std::thread`'s
-   constructor itself (confirmed via `WASMTIME_BACKTRACE_DETAILS=1`, e.g.
-   `threads_minimal` - a single spawn-and-join with no atomics - throws at
-   `__thread/thread.h:232`), *before* the host's `wasi::thread-spawn` import
-   is ever called (confirmed: zero log lines from `wasmtime_wasi_threads`
-   even at `RUST_LOG=trace`). Root cause not isolated further - plausibly a
-   wasi-libc-34/wasmtime-46 pairing issue in thread-runtime init, not
-   something fixable by harness-side plumbing.
+1. **Fixed**: `wasmtime-wasi`'s `WasiP1Ctx` isn't `Clone`, and
+   `wasmtime-wasi-threads` requires `Store<T>`'s `T: Clone`. wasmtime's own
+   CLI works around this with `Arc<Mutex<WasiP1Ctx>>` +
+   `Arc::get_mut(..).expect(..)`, documented in their own source as "not
+   actually compatible with wasi-threads" for concurrent access.
+   `threads.rs` fixes this by moving (not cloning) the host state into the
+   `Store` so exactly one owner exists once execution starts.
+2. **Fixed**: the shared-memory-size issue above meant `malloc()` for a new
+   thread's stack failed outright, so `std::thread`'s constructor threw
+   *before the host was ever called* - the original, misleading symptom.
+   Bumping initial/max memory got past this: threads now actually spawn.
+3. **Not fixed, not addressable by this project**: past both of those,
+   the spawned thread traps with `uninitialized element` the instant it
+   tries to call its own entry function - reproduced even for the
+   simplest possible case, a zero-argument free function with no
+   captures, no atomics (`examples/threads_minimal`). Root-caused with
+   `wasm-tools print`: it's a `call_indirect` into an empty function-table
+   slot in the *newly spawned instance*. wasi-threads' MVP model
+   re-instantiates the whole module per thread and shares only linear
+   memory - whatever the main instance's own startup establishes in the
+   function table isn't re-established for a `wasi_thread_start`-only
+   instantiation. This is upstream wasi-threads/wasi-libc-34 ecosystem
+   immaturity (this is exactly why the original WASM.md exploration steered
+   toward Emscripten over WASI specifically for thread support), not a
+   config knob.
 
-This matches what [docs/WASM_PLAN.md](../docs/WASM_PLAN.md) flagged as a
-risk to validate honestly rather than paper over: **multithreaded student
-code is not ready via this path today.** It does not block Phase 1 - no
-curriculum content requiring `std::thread` was found in `docs/`, and
-Option A's core value (dropping podman for ordinary compile+run) doesn't
-need it. Revisit if/when the curriculum needs it; start from
-`examples/threads_minimal/main.cpp`, the smallest repro.
+**Decision**: hybrid, not a wholesale switch to Emscripten-in-browser.
+Keep `wasmtime` (this project) for everything single-threaded; keep the
+existing podman path specifically for the six thread-using assignments.
+Full writeup and course-content audit in
+[docs/WASM_PLAN.md](../docs/WASM_PLAN.md). If re-testing this against a
+newer wasi-sdk/wasmtime release, `examples/threads_minimal/main.cpp` is the
+smallest repro - if it passes, re-run `examples/threads_atomic` and
+`examples/condvar_mutex` for the fuller check (correctness, not just
+"doesn't trap").
 
 ## Layout
 
