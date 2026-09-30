@@ -32,16 +32,24 @@ running the app (see `docs/TEST.md`) or the Worker locally
 
 Pre-commit (`prek`, config in `.pre-commit-config.yaml`): hygiene checks,
 `cargo fmt --all` (aborts the commit if it rewrites files — re-stage after),
-and `node --check worker/src/index.js`.
+and `node --check` over every staged `.js` file (`worker/src/index.js` and
+every `frontend/js/*.js` module).
 
-Compile/run/debug prefer a bundled wasm32-wasip1 toolchain (`clang++` +
-`wasmtime`, no host install, downloaded once on first launch — see
-`docs/WASM_PLAN.md`) over **podman** (docker as fallback); podman remains
-the fallback when that toolchain isn't ready, and stays required for
-thread-using student code (`wasm32-wasip1-threads` is confirmed
-non-functional upstream) and, unless the host also has `lldb-dap`, for
-debugging. On first launch the backend pulls `cppbox-sandbox` from
-ghcr.io if missing, same as before.
+Compile/run/debug use one of **two explicitly selected backends** - there is no
+fallback in either direction:
+
+- **WASM** (default): bundled wasm32-wasip1 toolchain (`clang++` + embedded
+  `wasmtime`, no host install, downloaded once on first launch - see
+  `docs/WASM_PLAN.md`). Fast and sandboxed, but cannot spawn threads and cannot
+  build `<execution>` or sanitizers. When it cannot serve the code it says so
+  and names Native.
+- **Native**: host `clang++`, host process. Supports threads, `<execution>` and
+  sanitizers; runs unsandboxed, which is why it is never selected implicitly.
+  Debugging needs host `clang++` + `lldb-dap`.
+
+**Podman is off** (`sandbox::PODMAN_ENABLED = false`): nothing pulls
+`cppbox-sandbox` at startup and no request routes to the container path. The
+implementation is retained and compiling, one const away from returning.
 
 ## Architecture
 
@@ -88,11 +96,36 @@ CPPBox (Tauri binary)
   plugin (second launch just focuses the existing window). No external
   browser — UI lives in the window. Data dir: OS app-data dir (or
   `CPPBOX_ROOT` override).
-- **`frontend/index.html`** — the entire client: one hand-written HTML file
-  (markup + CSS + vanilla JS), no bundler/build step, no framework.
-  CodeMirror 5 loaded from CDN (`<script>`/`<link>` tags at the top).
-  CodeMirror 6 upgrade is explicitly out of scope (see `docs/TODO.md`). Served
-  either as a static dir (`ServeDir`) or bundled as a Tauri resource.
+- **`frontend/`** — the entire client: hand-written HTML/CSS/JS, no bundler/
+  build step, no framework (`<script type="module">` — a native browser
+  feature, not a build tool). CodeMirror 5 loaded from CDN (`<script>`/
+  `<link>` tags at the top of `index.html`). CodeMirror 6 upgrade is
+  explicitly out of scope (see `docs/TODO.md`). Served either as a static
+  dir (`ServeDir`) or bundled as a Tauri resource (`resources:
+  ["../frontend/**/*"]` in `tauri.conf.json` — any new file under
+  `frontend/` is picked up automatically). Split by concern:
+  - `index.html` — markup shell only (`<link rel="stylesheet"
+    href="style.css">` + `<script type="module" src="js/app.js">`).
+  - `style.css` — all styling.
+  - `js/state.js` — leaf module: the `S` object holding all state shared
+    across the other modules (`project`, `tree`, `groups`, `cmPool`,
+    `cmPathMap`, `lsp`, `lspDiags`, `outTab`).
+  - `js/api.js` — fetch helper, toasts, `ask()` dialog, small shared utils
+    (`esc`/`icon`/`timeAgo`/etc.).
+  - `js/editor-panes.js` — the CodeMirror pool (one widget per grid pane,
+    one `CodeMirror.Doc` per open file), the drag-and-drop pane grid,
+    per-pane tab-groups, and pane-layout persistence.
+  - `js/lsp-debug.js` — clangd LSP client (lint/completion/goto-def/
+    signature-help/quick-fixes/hover) and the lldb-dap debugger bridge.
+  - `js/projects.js` — project CRUD, file tree, file save/format, tests,
+    run/rebuild, output-pane tabs, settings.
+  - `js/admin-marking.js` — teacher admin panel (classes/students/keys)
+    and the submission marking editor.
+  - `js/app.js` — bootstrap: command palette, global keybindings, init
+    sequence; the one module `index.html` loads directly.
+  Every function referenced from an inline HTML `onclick`/`ondragstart`/etc.
+  attribute is attached to `window` from whichever module defines it (ES
+  modules aren't global scope, unlike the old single inline `<script>`).
 - **`worker/`** — Cloudflare Worker (`src/index.js`, R2 + KV) acting as an
   always-on submission collector: students upload zips while the teacher's
   machine may be offline; the teacher's CPPBox instance later pulls the

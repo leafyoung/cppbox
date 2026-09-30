@@ -16,10 +16,17 @@
 //! approach). wasi-sdk ships a self-contained cross-compiler; pointing
 //! `--sysroot` at its bundled sysroot is enough.
 //!
-//! Thread-using code (`uses_threading`) still routes to `sandbox.rs`'s
-//! podman path: `wasm32-wasip1-threads` is confirmed non-functional with
-//! today's wasi-sdk/wasmtime pairing (spawned threads trap on
-//! `uninitialized element`), not something this module works around.
+//! Code this target cannot serve (`wasm_unsupported_reason`) still routes to
+//! `sandbox.rs`'s podman path, and that is not a gap waiting to be closed.
+//! Re-measured against wasi-sdk 34 + wasmtime 46.0.3: a
+//! `wasm32-wasip1-threads` build does compile and link, and carries the right
+//! ABI (a `wasi.thread-spawn` import, a `wasi_thread_start` export), but it
+//! only instantiates with shared memory enabled and then `std::thread` still
+//! fails with `thread constructor failed: Resource temporarily unavailable`.
+//! Upstream is removing the proposal rather than fixing it: wasmtime warns that
+//! `-Sthreads` becomes a hard error in 47.0.0, and Bytecode Alliance RFC 47
+//! (merged 2026-05) deletes wasi-threads outright, pointing at WASIp3
+//! cooperative threads near term and shared-everything-threads long term.
 //!
 //! Everything here is opportunistic: if a download fails or the platform
 //! isn't recognized, the relevant toolchain just stays unready and callers
@@ -42,6 +49,31 @@ const WASI_SDK_VERSION: &str = "34.0";
 const WASI_SDK_BASE_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download";
 const CLANGD_VERSION: &str = "22.1.6";
 const CLANGD_BASE_URL: &str = "https://github.com/clangd/clangd/releases/download";
+
+/// Ceiling for a run's wasm linear memory - applied uniformly to every path
+/// that executes through `wasmtime` here (single-file `compile_and_run` and
+/// multi-file `compile_and_run_with_flags`/`make_and_run`, whether invoked by
+/// a student running their own code or by grading re-running a submission -
+/// there is exactly one execution path in this module, so "uniform" falls
+/// out of the architecture rather than needing separate wiring). 4 GiB is
+/// wasm32's hard ceiling (a 32-bit linear-memory index tops out at 2^32
+/// bytes = 65536 64KiB pages) - this is the highest a wasm32 module can ever
+/// request, not an arbitrary number. Must stay in lockstep with `compile()`'s
+/// `--max-memory` linker flag below: the wasmtime `ResourceLimiter` can only
+/// ever be as generous as what the compiled module itself declares as its
+/// own max, so raising just one without the other is a no-op.
+const MAX_MEMORY_BYTES: usize = 4 * 1024 * 1024 * 1024;
+
+/// wasm stack size. wasi-sdk defaults this to 64 KiB, which is far smaller
+/// than any host default (Linux gives a thread 8 MiB) and small enough that an
+/// ordinary local array blows it: `array<array<double, 512>, 512>` is 2 MiB and
+/// traps with a bare "memory access out of bounds" that names neither the stack
+/// nor the array. Numerical code declares big locals routinely, so this is not
+/// an edge case - discovered by running a matrix-multiply teaching example that
+/// works everywhere else. 8 MiB matches the usual host default; unlike
+/// `MAX_MEMORY_BYTES` this is stack reserved up front, so it is charged against
+/// the module's memory rather than being free.
+const WASM_STACK_SIZE_BYTES: usize = 8 * 1024 * 1024;
 
 /// Readiness, mirroring `sandbox::sandbox_state()`: 0 unknown, 1 preparing,
 /// 2 ready, 3 failed (falls back to podman for everything).
@@ -274,21 +306,86 @@ fn extract_zip(archive: &Path, dest_dir: &Path) -> Result<(), String> {
     }
 }
 
-/// Conservative heuristic: any of these headers textually present routes to
-/// podman instead. False positives (falling back when not strictly needed)
-/// are harmless; false negatives are not, so this errs inclusive.
-pub fn uses_threading(files: &[File]) -> bool {
-    const MARKERS: &[&str] = &[
-        "<thread>",
-        "<future>",
-        "<mutex>",
-        "<condition_variable>",
-        "<atomic>",
-        "<shared_mutex>",
-    ];
+/// Why this code cannot *build* for wasm, or `None`.
+///
+/// Only `<execution>` qualifies: wasi-sdk's libc++ ships no parallel
+/// algorithms, so `std::execution::par` fails to compile with an error that
+/// says nothing useful to a student.
+///
+/// Threads are deliberately *not* here. Header presence is the wrong signal:
+/// `<atomic>`, `<mutex>` and `<shared_mutex>` all work fine single-threaded,
+/// and merely including `<thread>` costs nothing - three teaching modules were
+/// blocked from wasm while running perfectly on it, one of them because a
+/// vendored header it depends on mentions `<thread>`. Only *spawning* fails, so
+/// the code runs and `thread_failure_hint` explains it if it does.
+pub fn wasm_unsupported_reason(files: &[File]) -> Option<&'static str> {
+    const UNBUILDABLE_MARKERS: &[&str] = &["<execution>"];
+    if files
+        .iter()
+        .any(|f| UNBUILDABLE_MARKERS.iter().any(|m| f.content.contains(m)))
+    {
+        return Some("This code uses <execution> (parallel algorithms), which the WASM sandbox can't build (wasi-sdk's libc++ has no parallel algorithm support)");
+    }
+    None
+}
+
+/// Headers that imply *spawning* a thread - the operation wasm32-wasip1 cannot
+/// do. Not a blocker, only evidence for `thread_failure_hint`: `<atomic>`,
+/// `<mutex>` and `<shared_mutex>` are excluded because they work without ever
+/// starting a thread.
+const THREAD_SPAWN_MARKERS: &[&str] = &["<thread>", "<future>", "<condition_variable>"];
+
+/// Do these sources spawn threads? Evidence for `thread_failure_hint`.
+pub fn mentions_thread_spawn(files: &[File]) -> bool {
     files
         .iter()
-        .any(|f| MARKERS.iter().any(|m| f.content.contains(m)))
+        .any(|f| THREAD_SPAWN_MARKERS.iter().any(|m| f.content.contains(m)))
+}
+
+/// Same question for the Makefile flow, which works from a directory rather
+/// than an in-memory file list. Top level only, matching how projects are laid
+/// out; a miss just means the raw error is shown unexplained.
+fn dir_mentions_thread_spawn(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.filter_map(Result::ok).any(|e| {
+        let path = e.path();
+        let is_source = path
+            .extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|x| matches!(x, "cpp" | "cc" | "cxx" | "h" | "hpp"));
+        is_source
+            && std::fs::read_to_string(&path)
+                .is_ok_and(|text| THREAD_SPAWN_MARKERS.iter().any(|m| text.contains(m)))
+    })
+}
+
+/// Turn an opaque wasm run failure into an explanation, when the evidence
+/// supports one.
+///
+/// A `std::thread` that cannot start throws `std::system_error`, which escapes
+/// `main` and reaches the host as nothing more descriptive than "thrown Wasm
+/// exception" - the same text any other uncaught exception produces (a 4 GB
+/// `bad_alloc` looks identical). So this fires only when the failure looks like
+/// an uncaught exception *and* the sources include a thread-spawning header,
+/// and otherwise leaves the raw error alone rather than guessing.
+pub fn thread_failure_hint(spawns_threads: bool, run_output: &str) -> Option<String> {
+    let looks_like_uncaught = run_output.contains("thrown Wasm exception")
+        || run_output.contains("uncaught exception")
+        || run_output.contains("thread constructor failed");
+    if !looks_like_uncaught {
+        return None;
+    }
+    if !spawns_threads {
+        return None;
+    }
+    Some(
+        "The WASM sandbox can't start threads (wasm32-wasip1 has no thread support, and \
+         Wasmtime 47 removes the wasi-threads experiment), so std::thread and std::async \
+         throw as soon as they are constructed. Switch Sandbox to Native to run this."
+            .to_string(),
+    )
 }
 
 /// `extra` is whatever `storage::flags_to_extra` produced (e.g.
@@ -326,8 +423,16 @@ fn compile(
         .arg("-mllvm")
         .arg("-wasm-use-legacy-eh=false")
         .arg("-Wl,--initial-memory=67108864")
-        .arg("-Wl,--max-memory=268435456")
+        .arg(format!("-Wl,--max-memory={MAX_MEMORY_BYTES}"))
+        .arg(format!("-Wl,-z,stack-size={WASM_STACK_SIZE_BYTES}"))
         .arg("-lunwind")
+        // wasi-libc trims long double printf/scanf support by default to
+        // save size; without this, anything using `long double` (including
+        // std::stold/strtold, and printf/scanf %Lf) compiles fine but traps
+        // at runtime with "Support for formatting long double values is
+        // currently disabled" - discovered by actually running real student
+        // code that parses prices via std::stold.
+        .arg("-lc-printscan-long-double")
         .args(inc.split_whitespace())
         .args(extra.split_whitespace())
         .args(sources)
@@ -385,7 +490,7 @@ fn run_wasm_blocking(
     wasm_path: &Path,
     job_dir: &Path,
     stdin: &str,
-    timeout: Duration,
+    timeout: Option<Duration>,
     max_memory_bytes: usize,
 ) -> Result<(Outcome, String, String), String> {
     let mut config = Config::new();
@@ -430,7 +535,15 @@ fn run_wasm_blocking(
     let engine_for_ticker = engine.clone();
     let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
     let ticker = std::thread::spawn(move || {
-        if done_rx.recv_timeout(timeout).is_err() {
+        // `timeout: None` is the "Infinite" run-timeout choice: block on
+        // `done_rx` with no deadline instead of `recv_timeout`, so the epoch
+        // is never incremented and the module runs to completion however
+        // long that takes.
+        let fired = match timeout {
+            Some(d) => done_rx.recv_timeout(d).is_err(),
+            None => done_rx.recv().is_err(),
+        };
+        if fired {
             engine_for_ticker.increment_epoch();
         }
     });
@@ -450,7 +563,17 @@ fn run_wasm_blocking(
             ) {
                 Outcome::TimedOut
             } else {
-                Outcome::Trapped(e.to_string())
+                // The interesting part of a wasm failure is usually in the
+                // cause chain, not the top-level message: an uncaught C++
+                // exception surfaces as "error while executing at wasm
+                // backtrace: ..." with "thrown Wasm exception" only appearing
+                // as a cause. Flatten the chain so the student sees it - and so
+                // `thread_failure_hint` can recognise it.
+                let mut msg = e.to_string();
+                for cause in e.chain().skip(1) {
+                    msg.push_str(&format!("\n  caused by: {cause}"));
+                }
+                Outcome::Trapped(msg)
             }
         }
     };
@@ -516,8 +639,14 @@ fn cleanup(dir: &Path) {
 
 /// Compile then run under wasmtime. Same JSON shape as
 /// `sandbox::compile_and_run` - callers can't tell the difference.
-pub async fn compile_and_run(root: &Path, files: &[File], stdin: &str, std: &str) -> Value {
-    compile_and_run_with_flags(root, files, stdin, std, "").await
+pub async fn compile_and_run(
+    root: &Path,
+    files: &[File],
+    stdin: &str,
+    std: &str,
+    timeout: Option<Duration>,
+) -> Value {
+    compile_and_run_with_flags(root, files, stdin, std, "", timeout).await
 }
 
 /// Same as `compile_and_run`, plus a project's extra toolchain flags (e.g.
@@ -530,6 +659,7 @@ pub async fn compile_and_run_with_flags(
     stdin: &str,
     std: &str,
     extra: &str,
+    timeout: Option<Duration>,
 ) -> Value {
     let dir = job_dir(root);
     write_sources(&dir, files);
@@ -562,15 +692,15 @@ pub async fn compile_and_run_with_flags(
         Ok(Ok(Ok(o))) => o,
         Ok(Ok(Err(e))) => {
             cleanup(&dir);
-            return json!({ "ok": false, "stage": "compile", "compile_output": format!("Compilation error: {e}"), "run_output": "" });
+            return json!({ "ok": false, "stage": "compile", "compile_output": format!("Compilation error: {e}"), "run_output": "", "backend": "wasm" });
         }
         Ok(Err(e)) => {
             cleanup(&dir);
-            return json!({ "ok": false, "stage": "compile", "compile_output": format!("Compilation task error: {e}"), "run_output": "" });
+            return json!({ "ok": false, "stage": "compile", "compile_output": format!("Compilation task error: {e}"), "run_output": "", "backend": "wasm" });
         }
         Err(_) => {
             cleanup(&dir);
-            return json!({ "ok": false, "stage": "compile", "compile_output": "Compilation timed out (60s)", "run_output": "" });
+            return json!({ "ok": false, "stage": "compile", "compile_output": "Compilation timed out (60s)", "run_output": "", "backend": "wasm" });
         }
     };
     let mut compile_text = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -582,7 +712,7 @@ pub async fn compile_and_run_with_flags(
         } else {
             compile_text
         };
-        return json!({ "ok": false, "stage": "compile", "compile_output": text, "run_output": "" });
+        return json!({ "ok": false, "stage": "compile", "compile_output": text, "run_output": "", "backend": "wasm" });
     }
 
     let stdin_owned = stdin.to_string();
@@ -592,35 +722,168 @@ pub async fn compile_and_run_with_flags(
             &wasm_path,
             &job_for_run,
             &stdin_owned,
-            Duration::from_secs(15),
-            256 * 1024 * 1024,
+            timeout,
+            MAX_MEMORY_BYTES,
         )
     })
     .await;
     cleanup(&dir);
 
+    run_outcome_to_json(run_result, &compile_text, mentions_thread_spawn(files))
+}
+
+type RunOutcome = Result<Result<(Outcome, String, String), String>, tokio::task::JoinError>;
+
+/// Shared by every caller that's already run a wasm binary via
+/// `run_wasm_blocking` and just needs the common `{ok,stage,compile_output,
+/// run_output,...}` JSON shape - `compile_and_run_with_flags` and
+/// `make_and_run_via_makefile` differ only in how they got to a compiled
+/// `.wasm` file, not in how a run outcome becomes a response.
+fn run_outcome_to_json(run_result: RunOutcome, compile_text: &str, spawns_threads: bool) -> Value {
     match run_result {
         Ok(Ok((Outcome::Exited(code), out_text, err_text))) => {
             let mut run_text = out_text;
             run_text.push_str(&err_text);
-            json!({ "ok": code == 0, "stage": "run", "compile_output": compile_text, "run_output": run_text, "exit_code": code, "timed_out": false })
+            json!({ "ok": code == 0, "stage": "run", "compile_output": compile_text, "run_output": run_text, "exit_code": code, "timed_out": false, "backend": "wasm" })
         }
         Ok(Ok((Outcome::TimedOut, out_text, err_text))) => {
             let mut run_text = out_text;
             run_text.push_str(&err_text);
-            json!({ "ok": false, "stage": "run", "compile_output": compile_text, "run_output": run_text, "timed_out": true })
+            json!({ "ok": false, "stage": "run", "compile_output": compile_text, "run_output": run_text, "timed_out": true, "backend": "wasm" })
         }
         Ok(Ok((Outcome::Trapped(msg), out_text, err_text))) => {
             let mut run_text = out_text;
             run_text.push_str(&err_text);
             run_text.push_str(&format!("\n{msg}"));
-            json!({ "ok": false, "stage": "run", "compile_output": compile_text, "run_output": run_text, "exit_code": -1, "timed_out": false })
+            // A trap is where a failed std::thread lands, indistinguishable
+            // from any other uncaught exception - explain it when the sources
+            // back that reading up.
+            if let Some(hint) = thread_failure_hint(spawns_threads, &run_text) {
+                run_text.push_str(&format!("\n\n{hint}"));
+            }
+            json!({ "ok": false, "stage": "run", "compile_output": compile_text, "run_output": run_text, "exit_code": -1, "timed_out": false, "backend": "wasm" })
         }
         Ok(Err(e)) => {
-            json!({ "ok": false, "stage": "run", "compile_output": compile_text, "run_output": format!("run error: {e}") })
+            json!({ "ok": false, "stage": "run", "compile_output": compile_text, "run_output": format!("run error: {e}"), "backend": "wasm" })
         }
         Err(e) => {
-            json!({ "ok": false, "stage": "run", "compile_output": compile_text, "run_output": format!("run task error: {e}") })
+            json!({ "ok": false, "stage": "run", "compile_output": compile_text, "run_output": format!("run task error: {e}"), "backend": "wasm" })
         }
     }
+}
+
+/// Build a Makefile-based project by invoking its OWN `make` - natively, on
+/// the host, not sandboxed (only the resulting wasm binary's *execution* is,
+/// via wasmtime below) - with `CXX`/`CXXFLAGS` overridden on the command
+/// line to target wasm32-wasip1 via the bundled clang++.
+///
+/// Unlike `compile_and_run_with_flags` (which hand-compiles a synthetic file
+/// list into a throwaway scratch dir with CPPBox's own flag set), this runs
+/// in the real project directory (`dir`) using the project's actual
+/// Makefile, so both a project's own CXXFLAGS/preprocessor defines *and* any
+/// non-source assets it reads at runtime (data files, fixtures) are
+/// respected - mirroring what `sandbox::make_and_run`'s podman path already
+/// does, minus podman. `CXX=`/`CXXFLAGS=` are passed as `make` command-line
+/// arguments (not environment variables) because command-line variable
+/// assignments are the only thing GNU Make lets override a plain `CXX = ...`
+/// assignment in the Makefile itself; an `override CXXFLAGS += ...` line
+/// (as these course Makefiles use) still appends onto a command-line-
+/// supplied CXXFLAGS, so the project's own extra flags/defines and this
+/// function's wasm target flags combine correctly.
+///
+/// Still assumes the Makefile produces a binary literally named `app` - the
+/// same convention `write_makefile`'s own template and the podman path rely
+/// on. That's a separate, pre-existing limitation this function doesn't
+/// change: a Makefile that builds something else (e.g. `main`) will compile
+/// fine here but then fail to find `./app` to run.
+///
+/// Never deletes `dir` - unlike the scratch-job-dir functions in this file,
+/// `dir` is the user's real project directory.
+pub async fn make_and_run_via_makefile(
+    root: &Path,
+    dir: &Path,
+    stdin: &str,
+    clean: bool,
+    timeout: Option<Duration>,
+) -> Value {
+    let clangxx = match bundled_clangxx(root) {
+        Some(p) => p,
+        None => {
+            return json!({ "ok": false, "stage": "compile", "compile_output": "bundled clang++ not ready", "run_output": "", "backend": "wasm" })
+        }
+    };
+    let sysroot = sysroot_dir(root);
+    // -lc-printscan-long-double: see `compile()`'s comment - without it,
+    // `long double` parsing/formatting (std::stold, printf/scanf %Lf) traps
+    // at runtime instead of just failing to link if unused.
+    let cxxflags = format!(
+        "--target=wasm32-wasip1 --sysroot={} -fwasm-exceptions -mllvm -wasm-enable-eh -mllvm -wasm-use-legacy-eh=false -Wl,--initial-memory=67108864 -Wl,--max-memory={MAX_MEMORY_BYTES} -Wl,-z,stack-size={WASM_STACK_SIZE_BYTES} -lunwind -lc-printscan-long-double",
+        sysroot.display()
+    );
+
+    if clean {
+        // best-effort, same as the podman path's `make clean >/dev/null 2>&1 || true`
+        let _ = tokio::process::Command::new("make")
+            .arg("clean")
+            .current_dir(dir)
+            .output()
+            .await;
+    }
+    let dir_owned = dir.to_path_buf();
+    let clangxx_owned = clangxx.clone();
+    let build = tokio::time::timeout(
+        Duration::from_secs(60),
+        tokio::process::Command::new("make")
+            .current_dir(&dir_owned)
+            .arg(format!("CXX={}", clangxx_owned.display()))
+            .arg(format!("CXXFLAGS={cxxflags}"))
+            .output(),
+    )
+    .await;
+    let out = match build {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => {
+            return json!({ "ok": false, "stage": "compile", "compile_output": format!("make error: {e}"), "run_output": "", "backend": "wasm" })
+        }
+        Err(_) => {
+            return json!({ "ok": false, "stage": "compile", "compile_output": "Build timed out (60s)", "run_output": "", "backend": "wasm" })
+        }
+    };
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    let wasm_path = dir.join("app");
+    if !out.status.success() {
+        let text = if text.trim().is_empty() {
+            "Compilation failed (no output)".to_string()
+        } else {
+            text
+        };
+        return json!({ "ok": false, "stage": "compile", "compile_output": text, "run_output": "", "backend": "wasm" });
+    }
+    if !wasm_path.exists() {
+        // `make` succeeded, but this project's Makefile doesn't build a
+        // binary named `app` (CPPBox's build/run convention, matching
+        // `write_makefile`'s own template and the podman path) — say so
+        // explicitly rather than mislabeling a successful build as a
+        // compile failure with no visible error.
+        return json!({ "ok": false, "stage": "compile", "compile_output": format!("{text}\n\n⚠ `make` succeeded, but produced no `./app` binary. CPPBox expects the Makefile's build target to be named `app` — check what this Makefile actually outputs (e.g. `main`) and rename it, or add an `app` alias target."), "run_output": "", "backend": "wasm" });
+    }
+
+    let stdin_owned = stdin.to_string();
+    let job_for_run = dir.to_path_buf();
+    let run_result = tokio::task::spawn_blocking(move || {
+        run_wasm_blocking(
+            &wasm_path,
+            &job_for_run,
+            &stdin_owned,
+            timeout,
+            MAX_MEMORY_BYTES,
+        )
+    })
+    .await;
+    // NOTE: no `cleanup(dir)` here, deliberately - `dir` is the real project
+    // directory, not a scratch job_dir; deleting it would delete the user's
+    // project.
+
+    run_outcome_to_json(run_result, &text, dir_mentions_thread_spawn(dir))
 }

@@ -43,10 +43,6 @@ fn main() {
             std::fs::create_dir_all(&data_root).expect("create data dir");
             let frontend = frontend_dir(app);
 
-            // init: pull (ghcr on fresh installs) + smoke-test the sandbox image
-            std::thread::spawn(|| {
-                cppbox_core::sandbox::ensure_sandbox_image();
-            });
             // opportunistic: assemble the wasm32-wasip1 toolchain if the host
             // has wasm-ld; compile_and_run falls back to podman above if
             // this doesn't become ready.

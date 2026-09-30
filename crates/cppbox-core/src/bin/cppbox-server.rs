@@ -18,13 +18,11 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::connect(&data_dir.join("cppbox.db")).await?;
     db::migrate(&pool).await?;
 
-    // initialization: pull (ghcr, fresh installs) + smoke-test the sandbox image
-    std::thread::spawn(|| {
-        cppbox_core::sandbox::ensure_sandbox_image();
-    });
-    // opportunistic: assemble the wasm32-wasip1 toolchain if the host has
-    // wasm-ld; compile_and_run falls back to podman above if this doesn't
-    // become ready (missing wasm-ld, download failure, etc).
+    // wasm32-wasip1 is the only execution backend (sandbox::PODMAN_ENABLED is
+    // false), so nothing pulls the podman image here any more. Assemble the
+    // toolchain if the host has
+    // wasm-ld; until it is ready compile_and_run reports that instead of
+    // running anything (missing wasm-ld, download failure, etc).
     {
         let wasi_root = root.clone();
         std::thread::spawn(move || {

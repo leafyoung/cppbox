@@ -1,8 +1,9 @@
 //! LLDB debugger bridge over DAP (Debug Adapter Protocol), via lldb-dap - run
 //! natively on the host when `sandbox::native_debug_available()` (no
 //! container: a student debugging their own process isn't adversarial, see
-//! docs/WASM_PLAN.md Phase 3), else inside podman's ptrace-enabled sandbox
-//! as before. One lldb-dap subprocess per WebSocket session. Frontend <->
+//! docs/WASM_PLAN.md Phase 3). The podman ptrace-sandbox path below is
+//! unreachable while `sandbox::PODMAN_ENABLED` is false, so without host
+//! `clang++` + `lldb-dap` debugging reports that rather than starting. One lldb-dap subprocess per WebSocket session. Frontend <->
 //! backend: JSON commands/events over WS. Backend <-> lldb-dap: DAP
 //! (Content-Length framed JSON), same framing as LSP.
 use std::collections::HashMap;
@@ -99,6 +100,14 @@ async fn run_session(socket: WebSocket, st: AppState, pid: String, std: String) 
         .await;
 
     let native = sandbox::native_debug_available();
+    if !native && !sandbox::PODMAN_ENABLED {
+        // The containerised debug path needs podman, which is off; wasmtime has
+        // no debugger, so host lldb-dap is the only way to debug in this build.
+        let _ = ws_sender
+            .send(to_msg(json!({"type":"error","msg":"Debugging needs clang++ and lldb-dap installed on this machine: the container debug path is disabled (podman off) and the WASM sandbox has no debugger."})))
+            .await;
+        return;
+    }
     let compiled = if native {
         sandbox::compile_debug_native(&st.root, &files, &std).await
     } else {

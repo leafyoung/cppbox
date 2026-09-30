@@ -1,16 +1,44 @@
-# WASM migration plan (Option A, hybrid on threading)
+# WASM migration plan (Option A — the threading hybrid was superseded, see Status)
 
-Status: **Phases 0-3 landed** (0: go/no-go gate incl. threading; 1:
-`compile_and_run`/`make_and_run` via wasmtime; 2: clang-format/clang++/
-clangd bundled, no host install required; 3: debugging runs natively,
-no podman, when the host has clang++/lldb-dap). Only Phase 4 (shrinking
-podman's role in the docs/deploy story to match) remains. Verdict: threading is confirmed
-non-functional on wasm32-wasip1-threads today, and the curriculum does
-need it (FN6806 has ~6 threading-focused lessons) — so the plan is a
-hybrid: `wasmtime` for everything single-threaded (now live in
-`crates/cppbox-core/src/wasi_exec.rs`), podman kept specifically for
-thread-using assignments. Supersedes the open-ended exploration in
-[WASM.md](WASM.md) with a concrete decision and phased plan.
+Status: **complete — all phases landed** (0: go/no-go gate incl. threading;
+1: `compile_and_run`/`make_and_run` via wasmtime; 2: clang-format/clang++/
+clangd bundled, no host install required; 3: debugging runs natively, no
+podman, when the host has clang++/lldb-dap; 4: podman removed from the
+run story entirely).
+
+**The shipped design differs from the plan below in one important way, and the
+phase notes are kept as a record rather than a description of today:** the plan
+called for a *hybrid* — wasmtime for single-threaded code, podman kept for
+thread-using assignments, chosen automatically with podman as the fallback. What
+shipped is **two explicitly selected backends and no fallback at all**:
+
+| Backend | What it is | Threads / `<execution>` / sanitizers |
+| --- | --- | --- |
+| **WASM** (default) | bundled wasm32-wasip1 + embedded wasmtime | no |
+| **Native** | host `clang++`, host process (unsandboxed) | yes |
+
+Podman is off (`sandbox::PODMAN_ENABLED = false`): nothing pulls the image at
+startup and no request routes to the container path. The implementation is
+retained and compiling, one const away from returning. Where the notes below say
+"falls back to podman", read "reports why and names the other backend".
+
+Threading verdict, re-measured against wasi-sdk 34 + wasmtime 46.0.3: a
+`wasm32-wasip1-threads` build compiles, links, and carries the right ABI (a
+`wasi.thread-spawn` import, a `wasi_thread_start` export), instantiates only
+with shared memory enabled, and then `std::thread` still fails with `thread
+constructor failed: Resource temporarily unavailable`. Upstream is removing the
+proposal rather than fixing it — wasmtime warns that `-Sthreads` becomes a hard
+error in 47.0.0, and Bytecode Alliance RFC 47 (merged 2026-05) deletes
+wasi-threads outright, pointing at WASIp3 cooperative threads near term and
+shared-everything-threads long term. The curriculum's ~6 threading lessons run
+on **Native**.
+
+Running a module through the `wasmtime` **CLI** (for debugging or CI, as opposed
+to the embedded engine) needs `-W exceptions=y`: modules are built with
+`-fwasm-exceptions` and the CLI leaves that proposal off by default, failing
+with "exceptions proposal not enabled". The embedder sets
+`Config::wasm_exceptions(true)`, so the app itself is unaffected.
+
 `src_v2`/`frontend_v2` were the Phase 0 spike (kept for reference/reuse);
 Phase 1 onward edits `crates/cppbox-core` directly, since it's now proven
 out enough to build on rather than prototype separately.
@@ -141,22 +169,25 @@ for the other ~90% of the curriculum, and would still need its own
 validation pass. Instead:
 
 - **Non-threaded compile+run**: `wasmtime` (Option A), per Phase 1 below.
-- **Thread-using assignments** (the six directories above): keep the
-  existing podman path (`sandbox.rs`'s current `compile_and_run` via
-  container), selected per-assignment rather than per-student-machine.
-  This is a deliberate, scoped exception, not "give up on removing
-  podman" — podman only needs to stay installed for a small, identifiable
-  slice of the course.
-- Revisit dropping podman entirely if/when wasi-threads matures upstream
-  (worth periodically re-testing `src_v2/examples/threads_minimal` against
-  new wasi-sdk/wasmtime releases — it's the smallest possible repro).
+- **Thread-using assignments** (the six directories above): these run on the
+  **Native** backend, selected per-project. That replaced the planned podman
+  exception — same scoping (a small, identifiable slice of the course), without
+  requiring a container runtime to be installed at all.
+- Dropping podman is done; wasi-threads is not coming back (RFC 47 removes it
+  upstream), so there is nothing left to periodically re-test. Whether a module
+  truly needs Native is now decided by *running* it rather than by grepping its
+  headers: `<atomic>`, `<mutex>` and `<shared_mutex>` work fine single-threaded,
+  and `<thread>` alone is harmless (`std::this_thread::sleep_for` needs it and
+  runs on wasm), so only a failed spawn — an uncaught exception plus a
+  thread-spawning header — is treated as "this needs Native"
+  (`wasi_exec::thread_failure_hint`).
 
 **Phase 1 — done, including `make_and_run`.** `crates/cppbox-core/src/wasi_exec.rs` ports the Phase 0
 spike into production: native `clang++ --target=wasm32-wasip1` +
 `wasmtime` sandboxing (memory limiter, epoch-based timeout, WASI preopen
 scoped to the job dir), with the same JSON contract `compile_and_run`
 already returns. `sandbox::compile_and_run` dispatches to it when the wasi
-toolchain is ready *and* `wasi_exec::uses_threading` doesn't flag the
+toolchain is ready *and* `wasi_exec::wasm_unsupported_reason` doesn't flag the
 source (textual check for `<thread>`/`<future>`/`<mutex>`/
 `<condition_variable>`/`<atomic>`/`<shared_mutex>` — false positives just
 mean an unnecessary podman fallback, which is safe) — otherwise it falls

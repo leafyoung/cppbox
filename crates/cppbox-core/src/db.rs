@@ -22,6 +22,8 @@ pub struct Snippet {
     pub flags: Option<String>,
     #[allow(dead_code)]
     pub tests: Option<String>,
+    #[allow(dead_code)]
+    pub layout: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -168,6 +170,9 @@ pub async fn migrate(db: &SqlitePool) -> anyhow::Result<()> {
         .execute(db)
         .await;
     let _ = sqlx::query("ALTER TABLE snippets ADD COLUMN tests TEXT")
+        .execute(db)
+        .await;
+    let _ = sqlx::query("ALTER TABLE snippets ADD COLUMN layout TEXT")
         .execute(db)
         .await;
     sqlx::query(

@@ -30,6 +30,10 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/projects/{pid}/file/raw", get(read_file_raw))
         .route("/api/projects/{pid}/file/move", post(move_file))
+        .route(
+            "/api/projects/{pid}/makefile/regenerate",
+            post(regenerate_makefile),
+        )
         // compile / run / diagnostics / format
         .route("/api/run", post(run_code))
         .route("/api/check", post(check_code))
@@ -69,6 +73,16 @@ pub struct RunRequest {
     pub stdin: String,
     #[serde(default = "default_std")]
     pub std: String,
+    /// "wasm" (default) or "native" - explicit, never inferred. Scratch runs
+    /// have no project settings to read a preference from, so the caller sends
+    /// it; anything unrecognised means wasm.
+    #[serde(default)]
+    pub backend: Option<String>,
+    /// "30"/"60"/"inf" (default: 60s, see `sandbox::DEFAULT_RUN_TIMEOUT`) -
+    /// same three choices as a project's `flags.timeout`, sent directly since
+    /// a scratch run has no project/flags to read one from.
+    #[serde(default)]
+    pub timeout: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -115,6 +129,7 @@ pub struct ProjectUpdate {
     pub stdin: Option<String>,
     pub flags: Option<String>,
     pub tests: Option<String>,
+    pub layout: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -154,6 +169,7 @@ fn proj_meta(s: &Snippet) -> Value {
         "stdin": s.stdin.clone().unwrap_or_default(),
         "flags": serde_json::from_str::<Value>(s.flags.as_deref().unwrap_or("{}")).unwrap_or(json!({})),
         "tests": serde_json::from_str::<Value>(s.tests.as_deref().unwrap_or("[]")).unwrap_or(json!([])),
+        "layout": s.layout.as_deref().and_then(|v| serde_json::from_str::<Value>(v).ok()),
     })
 }
 
@@ -234,7 +250,12 @@ async fn create_project(
     std::fs::create_dir_all(&base)
         .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     storage::write_clangd_config(&st.root, &id, req.local_path.as_deref(), &std);
-    storage::write_makefile(&st.root, &id, req.local_path.as_deref(), &std, "-O2");
+    // don't clobber a real, user-authored Makefile when importing an existing
+    // folder via `local_path` (e.g. a course exercise) — only write ours when
+    // there's nothing there yet, or it's still our own template.
+    if storage::makefile_is_ours_or_absent(&st.root, &id, req.local_path.as_deref()) {
+        storage::write_makefile(&st.root, &id, req.local_path.as_deref(), &std, "-O2");
+    }
     storage::git_init_project(&st.root, &id, req.local_path.as_deref());
     let main_cpp = base.join("main.cpp");
     match req.main_code {
@@ -242,7 +263,18 @@ async fn create_project(
             std::fs::write(&main_cpp, code)
                 .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
-        None if !main_cpp.exists() => {
+        // Only stub in a default Hello World when this project has no source
+        // files anywhere yet (a genuinely brand-new project) — importing an
+        // existing folder via `local_path` that already has real sources
+        // elsewhere (e.g. `src/main.cpp`) must not get a stray root-level
+        // `main.cpp` injected alongside them (previously happened
+        // unconditionally whenever a root-level `main.cpp` didn't already
+        // exist, silently adding a second `main()` that a Makefile's
+        // `find . -name '*.cpp'`-style glob would pick up too).
+        None if !main_cpp.exists()
+            && storage::collect_source_files(&st.root, &id, req.local_path.as_deref())
+                .is_empty() =>
+        {
             std::fs::write(&main_cpp, "#include <iostream>\n\nint main() {\n    std::cout << \"Hello, CPPBox!\\n\";\n    return 0;\n}\n")
                 .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
@@ -271,29 +303,37 @@ async fn update_project(
     let stdin = req.stdin.or(s.stdin);
     let flags = req.flags.or(s.flags);
     let tests = req.tests.or(s.tests);
+    let layout = req.layout.or(s.layout);
     let now = now_iso();
-    sqlx::query("UPDATE snippets SET title = ?, cpp_standard = ?, local_path = ?, stdin = ?, flags = ?, tests = ?, updated_at = ? WHERE id = ?")
+    sqlx::query("UPDATE snippets SET title = ?, cpp_standard = ?, local_path = ?, stdin = ?, flags = ?, tests = ?, layout = ?, updated_at = ? WHERE id = ?")
         .bind(&title)
         .bind(&cpp_standard)
         .bind(&local_path)
         .bind(&stdin)
         .bind(&flags)
         .bind(&tests)
+        .bind(&layout)
         .bind(&now)
         .bind(&pid)
         .execute(&st.db)
         .await
         .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    // refresh the project's .clangd + Makefile when the standard or flags change
+    // refresh the project's .clangd + Makefile when the standard or flags
+    // change — but never clobber a real, user-authored Makefile just because
+    // the student tweaked the standard/flags dropdown (see
+    // makefile_is_ours_or_absent; use the explicit /makefile/regenerate
+    // endpoint to force it).
     if std_changed || flags_changed {
         storage::write_clangd_config(&st.root, &pid, local_path.as_deref(), &cpp_standard);
-        storage::write_makefile(
-            &st.root,
-            &pid,
-            local_path.as_deref(),
-            &cpp_standard,
-            &storage::flags_to_extra(flags.as_deref()),
-        );
+        if storage::makefile_is_ours_or_absent(&st.root, &pid, local_path.as_deref()) {
+            storage::write_makefile(
+                &st.root,
+                &pid,
+                local_path.as_deref(),
+                &cpp_standard,
+                &storage::flags_to_extra(flags.as_deref()),
+            );
+        }
     }
     let s = fetch_one(&st.db, &pid).await?;
     Ok(Json(proj_meta(&s)))
@@ -397,6 +437,23 @@ async fn move_file(
     Ok(Json(json!({ "path": req.new_path })))
 }
 
+/// Explicitly force-(re)write this project's Makefile from CPPBox's template,
+/// unconditionally — the one place allowed to clobber a real, user-authored
+/// Makefile. Everywhere else (create_project, update_project, and
+/// sandbox::make_and_run's own regen check) goes through
+/// `makefile_is_ours_or_absent` and skips when a real Makefile is present.
+/// The frontend is responsible for warning the user before calling this.
+async fn regenerate_makefile(
+    State(st): State<AppState>,
+    Path(pid): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let s = fetch_one(&st.db, &pid).await?;
+    let std = s.cpp_standard.clone().unwrap_or_else(|| "c++17".into());
+    let extra = storage::flags_to_extra(s.flags.as_deref());
+    storage::write_makefile(&st.root, &pid, lp(&s), &std, &extra);
+    Ok(Json(json!({ "ok": true })))
+}
+
 async fn delete_file(
     State(st): State<AppState>,
     Path(pid): Path<String>,
@@ -428,7 +485,12 @@ async fn run_code(State(st): State<AppState>, Json(req): Json<RunRequest>) -> Js
         }],
         _ => vec![],
     };
-    Json(sandbox::compile_and_run(&st.root, &files, &req.stdin, &req.std).await)
+    let backend = match req.backend.as_deref() {
+        Some("native") => sandbox::Backend::Native,
+        _ => sandbox::Backend::Wasm,
+    };
+    let timeout = sandbox::parse_run_timeout(req.timeout.as_deref());
+    Json(sandbox::compile_and_run(&st.root, &files, &req.stdin, &req.std, backend, timeout).await)
 }
 
 async fn check_code(State(st): State<AppState>, Json(req): Json<CheckRequest>) -> Json<Value> {
@@ -469,16 +531,28 @@ async fn read_file_raw(
     Ok(([(axum::http::header::CONTENT_TYPE, ct)], bytes).into_response())
 }
 
-/// Sandbox image init state (0 unknown, 1 pulling/present, 2 ready, 3 failed).
-/// Also reports the wasm32-wasip1 (wasmtime) toolchain, which - when ready -
-/// is what `compile_and_run` actually uses for non-threaded code; podman
-/// stays the fallback (see docs/WASM_PLAN.md).
+/// Backend availability (state: 0 unknown, 1 preparing, 2 ready, 3 failed).
+///
+/// Two backends are selectable and neither falls back to the other, so this
+/// reports both: `wasi` for wasm32-wasip1 under wasmtime, `native` for host
+/// clang++. The top-level `state`/`ready`/`message` describe wasm, the default,
+/// which keeps the existing status dot meaningful with no frontend change.
+/// `podman` reports that it is disabled rather than merely unready, so callers
+/// can tell "off by design" from "still pulling".
 async fn sandbox_status() -> Json<Value> {
-    let (state, msg) = sandbox::sandbox_state();
+    let (podman_state, podman_msg) = sandbox::sandbox_state();
     let (wasi_state, wasi_msg) = crate::wasi_exec::wasi_state();
+    let native_ok = sandbox::native_available();
     Json(json!({
-        "state": state, "ready": state == 2, "message": msg,
+        "state": wasi_state, "ready": wasi_state == 2, "message": wasi_msg,
+        "backend": "wasm",
         "wasi": { "state": wasi_state, "ready": wasi_state == 2, "message": wasi_msg },
+        "native": {
+            "enabled": true,
+            "ready": native_ok,
+            "message": if native_ok { "host clang++ available" } else { "clang++ not found on PATH" },
+        },
+        "podman": { "enabled": sandbox::PODMAN_ENABLED, "state": podman_state, "message": podman_msg },
     }))
 }
 
@@ -546,15 +620,21 @@ async fn run_project(
     let lpv = lp(&s).map(str::to_string);
     let std = s.cpp_standard.unwrap_or_else(|| "c++17".into());
     let extra = storage::flags_to_extra(s.flags.as_deref());
+    let backend = sandbox::Backend::from_flags(s.flags.as_deref());
+    let timeout = sandbox::run_timeout(s.flags.as_deref());
     Ok(Json(
         sandbox::make_and_run(
             &st.root,
             &pid,
             lpv.as_deref(),
-            &req.stdin,
-            &std,
-            &extra,
-            false,
+            sandbox::RunOpts {
+                stdin: &req.stdin,
+                std: &std,
+                extra: &extra,
+                clean: false,
+                backend,
+                timeout,
+            },
         )
         .await,
     ))
@@ -576,15 +656,21 @@ async fn rebuild_project(
     let lpv = lp(&s).map(str::to_string);
     let std = s.cpp_standard.unwrap_or_else(|| "c++17".into());
     let extra = storage::flags_to_extra(s.flags.as_deref());
+    let backend = sandbox::Backend::from_flags(s.flags.as_deref());
+    let timeout = sandbox::run_timeout(s.flags.as_deref());
     Ok(Json(
         sandbox::make_and_run(
             &st.root,
             &pid,
             lpv.as_deref(),
-            &req.stdin,
-            &std,
-            &extra,
-            true,
+            sandbox::RunOpts {
+                stdin: &req.stdin,
+                std: &std,
+                extra: &extra,
+                clean: true,
+                backend,
+                timeout,
+            },
         )
         .await,
     ))

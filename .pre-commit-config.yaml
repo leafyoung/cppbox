@@ -25,11 +25,12 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
-      # Syntax-check the standalone worker JS (the frontend's inline script is
-      # embedded in index.html and is exercised by the build/tests instead).
+      # Syntax-check every staged .js file (worker/src/index.js and the
+      # frontend/js/*.js ES modules) — node --check only accepts one file
+      # at a time, so loop over whatever prek passes us.
       - id: js-syntax
-        name: node --check (worker JS)
-        entry: node --check worker/src/index.js
+        name: node --check (all JS files)
+        entry: bash -c 'for f in "$@"; do node --check "$f" || exit 1; done' --
         language: system
         files: '\.js$'
-        pass_filenames: false
+        pass_filenames: true
